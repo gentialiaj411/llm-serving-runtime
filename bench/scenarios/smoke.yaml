@@ -1,0 +1,6 @@
+version: "1"
+scenarios:
+  - id: smoke_short
+    concurrency: [1]
+    prompt_tokens: 32
+    max_output_tokens: 16

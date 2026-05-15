@@ -1,0 +1,160 @@
+{"ts_unix_ms": 1778860277860, "event": "admitted", "request_id": "req-1778860277860556", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860278960, "event": "failed", "request_id": "req-1778860277860556"}
+{"ts_unix_ms": 1778860278966, "event": "admitted", "request_id": "req-1778860278966989", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860280046, "event": "failed", "request_id": "req-1778860278966989"}
+{"ts_unix_ms": 1778860280050, "event": "admitted", "request_id": "req-1778860280050540", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860281160, "event": "failed", "request_id": "req-1778860280050540"}
+{"ts_unix_ms": 1778860281164, "event": "admitted", "request_id": "req-1778860281164201", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860282259, "event": "failed", "request_id": "req-1778860281164201"}
+{"ts_unix_ms": 1778860282263, "event": "admitted", "request_id": "req-1778860282263538", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860283368, "event": "failed", "request_id": "req-1778860282263538"}
+{"ts_unix_ms": 1778860283372, "event": "admitted", "request_id": "req-1778860283372794", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860284474, "event": "failed", "request_id": "req-1778860283372794"}
+{"ts_unix_ms": 1778860284478, "event": "admitted", "request_id": "req-1778860284478301", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860285584, "event": "failed", "request_id": "req-1778860284478301"}
+{"ts_unix_ms": 1778860285588, "event": "admitted", "request_id": "req-1778860285588046", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860286704, "event": "failed", "request_id": "req-1778860285588046"}
+{"ts_unix_ms": 1778860286708, "event": "admitted", "request_id": "req-1778860286708566", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860287813, "event": "failed", "request_id": "req-1778860286708566"}
+{"ts_unix_ms": 1778860287819, "event": "admitted", "request_id": "req-1778860287819359", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860288929, "event": "failed", "request_id": "req-1778860287819359"}
+{"ts_unix_ms": 1778860288932, "event": "admitted", "request_id": "req-1778860288932845", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860290029, "event": "failed", "request_id": "req-1778860288932845"}
+{"ts_unix_ms": 1778860290033, "event": "admitted", "request_id": "req-1778860290033142", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860291125, "event": "failed", "request_id": "req-1778860290033142"}
+{"ts_unix_ms": 1778860291129, "event": "admitted", "request_id": "req-1778860291129042", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860292223, "event": "failed", "request_id": "req-1778860291129042"}
+{"ts_unix_ms": 1778860292227, "event": "admitted", "request_id": "req-1778860292227528", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860293321, "event": "failed", "request_id": "req-1778860292227528"}
+{"ts_unix_ms": 1778860293324, "event": "admitted", "request_id": "req-1778860293324978", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860294432, "event": "failed", "request_id": "req-1778860293324978"}
+{"ts_unix_ms": 1778860294435, "event": "admitted", "request_id": "req-1778860294435826", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860295532, "event": "failed", "request_id": "req-1778860294435826"}
+{"ts_unix_ms": 1778860295536, "event": "admitted", "request_id": "req-1778860295536261", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860296631, "event": "failed", "request_id": "req-1778860295536261"}
+{"ts_unix_ms": 1778860296635, "event": "admitted", "request_id": "req-1778860296635165", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860297743, "event": "failed", "request_id": "req-1778860296635165"}
+{"ts_unix_ms": 1778860297747, "event": "admitted", "request_id": "req-1778860297747321", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860298836, "event": "failed", "request_id": "req-1778860297747321"}
+{"ts_unix_ms": 1778860298840, "event": "admitted", "request_id": "req-1778860298840254", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860299934, "event": "failed", "request_id": "req-1778860298840254"}
+{"ts_unix_ms": 1778860300055, "event": "admitted", "request_id": "req-1778860300055210", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860308069, "event": "failed", "request_id": "req-1778860300055210"}
+{"ts_unix_ms": 1778860308073, "event": "admitted", "request_id": "req-1778860308073733", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860316078, "event": "failed", "request_id": "req-1778860308073733"}
+{"ts_unix_ms": 1778860316081, "event": "admitted", "request_id": "req-1778860316081894", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860324085, "event": "failed", "request_id": "req-1778860316081894"}
+{"ts_unix_ms": 1778860324089, "event": "admitted", "request_id": "req-1778860324089453", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860332119, "event": "failed", "request_id": "req-1778860324089453"}
+{"ts_unix_ms": 1778860332123, "event": "admitted", "request_id": "req-1778860332123247", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860340257, "event": "failed", "request_id": "req-1778860332123247"}
+{"ts_unix_ms": 1778860340279, "event": "admitted", "request_id": "req-1778860340279456", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860348324, "event": "failed", "request_id": "req-1778860340279456"}
+{"ts_unix_ms": 1778860348328, "event": "admitted", "request_id": "req-1778860348328586", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860356348, "event": "failed", "request_id": "req-1778860348328586"}
+{"ts_unix_ms": 1778860356351, "event": "admitted", "request_id": "req-1778860356351836", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860364375, "event": "failed", "request_id": "req-1778860356351836"}
+{"ts_unix_ms": 1778860364379, "event": "admitted", "request_id": "req-1778860364379525", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860372453, "event": "failed", "request_id": "req-1778860364379525"}
+{"ts_unix_ms": 1778860372457, "event": "admitted", "request_id": "req-1778860372457718", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860380463, "event": "failed", "request_id": "req-1778860372457718"}
+{"ts_unix_ms": 1778860380578, "event": "admitted", "request_id": "req-1778860380578717", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860388673, "event": "failed", "request_id": "req-1778860380578717"}
+{"ts_unix_ms": 1778860388676, "event": "admitted", "request_id": "req-1778860388676817", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860396693, "event": "failed", "request_id": "req-1778860388676817"}
+{"ts_unix_ms": 1778860396697, "event": "admitted", "request_id": "req-1778860396697423", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860404750, "event": "failed", "request_id": "req-1778860396697423"}
+{"ts_unix_ms": 1778860404787, "event": "admitted", "request_id": "req-1778860404787860", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860417985, "event": "admitted", "request_id": "req-1778860417985160", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860418402, "event": "failed", "request_id": "req-1778860417985160"}
+{"ts_unix_ms": 1778860418419, "event": "admitted", "request_id": "req-1778860418419856", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860418784, "event": "failed", "request_id": "req-1778860418419856"}
+{"ts_unix_ms": 1778860418787, "event": "admitted", "request_id": "req-1778860418787962", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860419147, "event": "failed", "request_id": "req-1778860418787962"}
+{"ts_unix_ms": 1778860419150, "event": "admitted", "request_id": "req-1778860419150535", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860419541, "event": "failed", "request_id": "req-1778860419150535"}
+{"ts_unix_ms": 1778860419545, "event": "admitted", "request_id": "req-1778860419545438", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860419902, "event": "failed", "request_id": "req-1778860419545438"}
+{"ts_unix_ms": 1778860419905, "event": "admitted", "request_id": "req-1778860419905869", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860420256, "event": "failed", "request_id": "req-1778860419905869"}
+{"ts_unix_ms": 1778860420260, "event": "admitted", "request_id": "req-1778860420260661", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860420658, "event": "failed", "request_id": "req-1778860420260661"}
+{"ts_unix_ms": 1778860420662, "event": "admitted", "request_id": "req-1778860420662485", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860421023, "event": "failed", "request_id": "req-1778860420662485"}
+{"ts_unix_ms": 1778860421027, "event": "admitted", "request_id": "req-1778860421027633", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860421382, "event": "failed", "request_id": "req-1778860421027633"}
+{"ts_unix_ms": 1778860421386, "event": "admitted", "request_id": "req-1778860421386462", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860421788, "event": "failed", "request_id": "req-1778860421386462"}
+{"ts_unix_ms": 1778860421792, "event": "admitted", "request_id": "req-1778860421792832", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860422154, "event": "failed", "request_id": "req-1778860421792832"}
+{"ts_unix_ms": 1778860422158, "event": "admitted", "request_id": "req-1778860422158081", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860422512, "event": "failed", "request_id": "req-1778860422158081"}
+{"ts_unix_ms": 1778860422515, "event": "admitted", "request_id": "req-1778860422515827", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860422921, "event": "failed", "request_id": "req-1778860422515827"}
+{"ts_unix_ms": 1778860422925, "event": "admitted", "request_id": "req-1778860422925281", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860423283, "event": "failed", "request_id": "req-1778860422925281"}
+{"ts_unix_ms": 1778860423287, "event": "admitted", "request_id": "req-1778860423287298", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860423643, "event": "failed", "request_id": "req-1778860423287298"}
+{"ts_unix_ms": 1778860423647, "event": "admitted", "request_id": "req-1778860423647475", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860424047, "event": "failed", "request_id": "req-1778860423647475"}
+{"ts_unix_ms": 1778860424050, "event": "admitted", "request_id": "req-1778860424050999", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860424413, "event": "failed", "request_id": "req-1778860424050999"}
+{"ts_unix_ms": 1778860424417, "event": "admitted", "request_id": "req-1778860424417542", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860424774, "event": "failed", "request_id": "req-1778860424417542"}
+{"ts_unix_ms": 1778860424777, "event": "admitted", "request_id": "req-1778860424777931", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860425168, "event": "failed", "request_id": "req-1778860424777931"}
+{"ts_unix_ms": 1778860425172, "event": "admitted", "request_id": "req-1778860425172073", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860425530, "event": "failed", "request_id": "req-1778860425172073"}
+{"ts_unix_ms": 1778860425644, "event": "admitted", "request_id": "req-1778860425644099", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860426298, "event": "failed", "request_id": "req-1778860425644099"}
+{"ts_unix_ms": 1778860494716, "event": "admitted", "request_id": "req-1778860494716274", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860494957, "event": "failed", "request_id": "req-1778860494716274"}
+{"ts_unix_ms": 1778860508087, "event": "admitted", "request_id": "req-1778860508087321", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860508323, "event": "failed", "request_id": "req-1778860508087321"}
+{"ts_unix_ms": 1778860524525, "event": "admitted", "request_id": "req-1778860524525713", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860524757, "event": "completed", "request_id": "req-1778860524525713", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860524, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello world hello world hello world hello world"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 2, "completion_tokens": 8, "total_tokens": 10}}}
+{"ts_unix_ms": 1778860525283, "event": "admitted", "request_id": "req-1778860525283165", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860525647, "event": "completed", "request_id": "req-1778860525283165", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860525, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860525649, "event": "admitted", "request_id": "req-1778860525649747", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860526009, "event": "completed", "request_id": "req-1778860525649747", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860526, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860526011, "event": "admitted", "request_id": "req-1778860526011461", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860526370, "event": "completed", "request_id": "req-1778860526011461", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860526, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860526372, "event": "admitted", "request_id": "req-1778860526372996", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860526840, "event": "completed", "request_id": "req-1778860526372996", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860526, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860526842, "event": "admitted", "request_id": "req-1778860526842616", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860527200, "event": "completed", "request_id": "req-1778860526842616", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860527, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860527202, "event": "admitted", "request_id": "req-1778860527202292", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860527557, "event": "completed", "request_id": "req-1778860527202292", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860527, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860527559, "event": "admitted", "request_id": "req-1778860527559745", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860528011, "event": "completed", "request_id": "req-1778860527559745", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860528, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860528013, "event": "admitted", "request_id": "req-1778860528013791", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860528371, "event": "completed", "request_id": "req-1778860528013791", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860528, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860528373, "event": "admitted", "request_id": "req-1778860528373674", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860528729, "event": "completed", "request_id": "req-1778860528373674", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860528, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860528731, "event": "admitted", "request_id": "req-1778860528731961", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860529199, "event": "completed", "request_id": "req-1778860528731961", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860529, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860529202, "event": "admitted", "request_id": "req-1778860529202061", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860529564, "event": "completed", "request_id": "req-1778860529202061", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860529, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860529566, "event": "admitted", "request_id": "req-1778860529566450", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860529923, "event": "completed", "request_id": "req-1778860529566450", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860529, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860529925, "event": "admitted", "request_id": "req-1778860529925884", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860530377, "event": "completed", "request_id": "req-1778860529925884", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860530, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860530379, "event": "admitted", "request_id": "req-1778860530379908", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860530740, "event": "completed", "request_id": "req-1778860530379908", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860530, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860530742, "event": "admitted", "request_id": "req-1778860530742878", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860531104, "event": "completed", "request_id": "req-1778860530742878", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860531, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860531106, "event": "admitted", "request_id": "req-1778860531106588", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860531574, "event": "completed", "request_id": "req-1778860531106588", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860531, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860531576, "event": "admitted", "request_id": "req-1778860531576537", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860531924, "event": "completed", "request_id": "req-1778860531576537", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860531, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860531926, "event": "admitted", "request_id": "req-1778860531926344", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860532282, "event": "completed", "request_id": "req-1778860531926344", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860532, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860532284, "event": "admitted", "request_id": "req-1778860532284106", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860532738, "event": "completed", "request_id": "req-1778860532284106", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860532, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860532740, "event": "admitted", "request_id": "req-1778860532740270", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860533094, "event": "completed", "request_id": "req-1778860532740270", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860533, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 16, "total_tokens": 48}}}
+{"ts_unix_ms": 1778860533208, "event": "admitted", "request_id": "req-1778860533208147", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860533799, "event": "completed", "request_id": "req-1778860533208147", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860533, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15 tok16 tok17 tok18 tok19 tok20 tok21 tok22 tok23 tok24 tok25 tok26 tok27 tok28 tok29 tok30 tok31"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 32, "total_tokens": 64}}}
+{"ts_unix_ms": 1778860533802, "event": "admitted", "request_id": "req-1778860533802131", "worker_url": "http://127.0.0.1:8102", "deadline_ms": null}
+{"ts_unix_ms": 1778860534405, "event": "completed", "request_id": "req-1778860533802131", "response": {"id": "chatcmpl-phase2", "object": "chat.completion", "created": 1778860534, "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "choices": [{"index": 0, "message": {"role": "assistant", "content": "tok0 tok1 tok2 tok3 tok4 tok5 tok6 tok7 tok8 tok9 tok10 tok11 tok12 tok13 tok14 tok15 tok16 tok17 tok18 tok19 tok20 tok21 tok22 tok23 tok24 tok25 tok26 tok27 tok28 tok29 tok30 tok31"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 32, "completion_tokens": 32, "total_tokens": 64}}}
+{"ts_unix_ms": 1778860545993, "event": "cancelled", "request_id": "cancel-test-1"}
