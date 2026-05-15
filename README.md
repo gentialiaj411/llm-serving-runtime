@@ -19,3 +19,9 @@ pip install -r bench/harness/requirements.txt
 # Validate scenario + schema
 python bench/harness/run.py --dry-run --scenarios bench/scenarios/baseline.yaml
 ```
+
+## Final benchmark handoff
+- For pinned vLLM baseline generation on a supported Linux GPU host, run:
+`bash scripts/gpu_host_handoff.sh`
+- See full instructions:
+`docs/reports/gpu-baseline-handoff.md`

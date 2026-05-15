@@ -12,5 +12,30 @@ jobs:
           python-version: '3.11'
       - name: Install deps
         run: pip install -r bench/harness/requirements.txt
+      - name: Unit tests
+        run: python -m unittest discover -s tests
       - name: Harness dry run
         run: python bench/harness/run.py --dry-run --system ci-dry --run-id ci-dry
+      - name: Start lightweight runtime
+        run: |
+          python -m uvicorn frontend.phase1_server:app --host 127.0.0.1 --port 8000 > phase1.log 2>&1 &
+          echo $! > phase1.pid
+          python - <<'PY'
+          import time
+          import httpx
+
+          deadline = time.time() + 30
+          while time.time() < deadline:
+              try:
+                  r = httpx.get("http://127.0.0.1:8000/healthz", timeout=2.0)
+                  if r.status_code == 200:
+                      raise SystemExit(0)
+              except Exception:
+                  pass
+              time.sleep(0.5)
+          raise SystemExit("phase1 server did not become healthy")
+          PY
+      - name: Harness streaming smoke
+        run: python bench/harness/run.py --system ci-smoke --inference-mode stub_token_generation --scenarios bench/scenarios/smoke.yaml --base-url http://127.0.0.1:8000/v1/chat/completions --run-id ci-smoke
+      - name: Chaos smoke
+        run: python bench/chaos/run_chaos.py --run-id ci-chaos-smoke --base-url http://127.0.0.1:8000/v1/chat/completions --worker-pids 99999999 --duration-s 1 --concurrency 1 --kill-interval-s 1 --output bench/results/ci-chaos-smoke.json

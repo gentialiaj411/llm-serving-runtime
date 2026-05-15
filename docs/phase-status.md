@@ -15,4 +15,6 @@
 ## Gaps vs locked stack
 - Current Phase 2 services are Python stand-ins for fast iteration.
 - Strict locked-stack compliance still requires C++ coordinator and C++/CUDA worker with gRPC hot path.
-- Harness currently measures endpoint behavior and core latency/throughput columns, but GPU metrics are placeholder zeros until GPU telemetry integration.
+- Harness TTFT and inter-token latency are measured from streamed assistant token chunks. Non-streaming responses are not used for these timing columns.
+- Phase 1 and Phase 2 local runtime benchmarks measure deterministic stub-token generation, not real model inference. Their manifests must use `inference_mode: stub_token_generation`.
+- GPU metric columns are valid only when manifest `gpu_metrics_valid` is `true`. If GPU sampling is disabled or `nvidia-smi` yields no samples, GPU CSV columns are zeros and must not be reported as measured utilization or memory.

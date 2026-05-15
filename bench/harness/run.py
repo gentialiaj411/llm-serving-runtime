@@ -11,6 +11,7 @@ import statistics
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 import httpx
 import yaml
@@ -23,7 +24,7 @@ CSV_COLUMNS = [
     "inter_token_latency_p50","inter_token_latency_p95","inter_token_latency_p99",
     "latency_ms_p50","latency_ms_p95","latency_ms_p99",
     "gpu_util_pct_p50","gpu_util_pct_p95","gpu_mem_used_mb_p50","gpu_mem_used_mb_p95",
-    "success_rate","http_error_rate","timeout_rate","est_dollars_per_million_output_tokens"
+    "success_rate","http_error_rate","timeout_rate","other_error_rate","est_dollars_per_million_output_tokens"
 ]
 
 
@@ -31,8 +32,19 @@ def pctl(values: list[float], q: float) -> float:
     if not values:
         return 0.0
     xs = sorted(values)
-    i = int(round((len(xs) - 1) * q))
-    return float(xs[max(0, min(i, len(xs) - 1))])
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * min(1.0, max(0.0, q))
+    lower = int(pos)
+    upper = min(lower + 1, len(xs) - 1)
+    weight = pos - lower
+    return float(xs[lower] * (1.0 - weight) + xs[upper] * weight)
+
+
+class RequestFailure(Exception):
+    def __init__(self, kind: str, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 def make_prompt(tokens: int, turns: int = 1) -> str:
@@ -77,18 +89,22 @@ async def sample_gpu(stop_event: asyncio.Event, sink: list[tuple[float, float]],
 
 
 async def wait_for_health(base_url: str, timeout_s: float = 180.0) -> None:
-    health_url = base_url.replace("/v1/chat/completions", "/health")
+    health_candidates = [
+        base_url.replace("/v1/chat/completions", "/healthz"),
+        base_url.replace("/v1/chat/completions", "/health"),
+    ]
     t0 = time.perf_counter()
     async with httpx.AsyncClient(timeout=5.0) as client:
         while time.perf_counter() - t0 < timeout_s:
-            try:
-                r = await client.get(health_url)
-                if r.status_code < 500:
-                    return
-            except Exception:
-                pass
+            for health_url in health_candidates:
+                try:
+                    r = await client.get(health_url)
+                    if r.status_code < 500:
+                        return
+                except Exception:
+                    pass
             await asyncio.sleep(1.0)
-    raise RuntimeError(f"Timed out waiting for health endpoint: {health_url}")
+    raise RuntimeError(f"Timed out waiting for health endpoints: {', '.join(health_candidates)}")
 
 
 def launch_vllm(args: argparse.Namespace) -> subprocess.Popen[str] | None:
@@ -119,38 +135,27 @@ def launch_vllm(args: argparse.Namespace) -> subprocess.Popen[str] | None:
     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
 
 
-async def one_request(
-    client: httpx.AsyncClient, url: str, model: str, prompt_tokens: int, max_out: int, turns: int = 1
-) -> dict:
-    prompt = make_prompt(prompt_tokens, turns=turns)
-    body = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": max_out,
-        "temperature": 0.0,
-        "stream": False,
-    }
-    t0 = time.perf_counter()
-    resp = await client.post(url, json=body)
-    elapsed = (time.perf_counter() - t0) * 1000.0
-    resp.raise_for_status()
-    payload = resp.json()
-    out = payload["choices"][0]["message"]["content"]
-    prompt_tok = int(payload.get("usage", {}).get("prompt_tokens", prompt_tokens))
-    out_tok = int(payload.get("usage", {}).get("completion_tokens", max_out))
-    return {
-        "latency_ms": elapsed,
-        "ttft_ms": elapsed,
-        "itok_ms": elapsed / max(1, out_tok),
-        "prompt_tokens": prompt_tok,
-        "out_tokens": out_tok,
-        "output": out,
-    }
+def _extract_stream_delta(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices") or []
+    if not choices:
+        return ""
+    choice = choices[0]
+    delta = choice.get("delta") or {}
+    if isinstance(delta, dict):
+        content = delta.get("content")
+        if content is not None:
+            return str(content)
+    message = choice.get("message") or {}
+    if isinstance(message, dict):
+        content = message.get("content")
+        if content is not None:
+            return str(content)
+    return ""
 
 
 async def one_request_streaming(
     client: httpx.AsyncClient, url: str, model: str, prompt_tokens: int, max_out: int, turns: int = 1
-) -> str:
+) -> dict[str, Any]:
     prompt = make_prompt(prompt_tokens, turns=turns)
     body = {
         "model": model,
@@ -160,11 +165,67 @@ async def one_request_streaming(
         "stream": True,
     }
     chunks: list[str] = []
-    async with client.stream("POST", url, json=body) as resp:
-        resp.raise_for_status()
-        async for chunk in resp.aiter_text():
-            chunks.append(chunk)
-    return "".join(chunks)
+    arrivals_ms: list[float] = []
+    usage: dict[str, Any] = {}
+    t0 = time.perf_counter()
+    try:
+        async with client.stream("POST", url, json=body) as resp:
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise RequestFailure("http", str(exc)) from exc
+
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    line = line[5:].strip()
+                if line == "[DONE]":
+                    break
+
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise RequestFailure("other", f"Non-JSON streaming chunk: {line[:80]}") from exc
+
+                if isinstance(payload, dict) and payload.get("usage"):
+                    usage = payload["usage"]
+
+                delta = _extract_stream_delta(payload)
+                if delta:
+                    chunks.append(delta)
+                    arrivals_ms.append((time.perf_counter() - t0) * 1000.0)
+    except httpx.TimeoutException as exc:
+        raise RequestFailure("timeout", str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        raise RequestFailure("http", str(exc)) from exc
+    except RequestFailure:
+        raise
+    except Exception as exc:
+        raise RequestFailure("other", str(exc)) from exc
+
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    if not arrivals_ms:
+        raise RequestFailure("other", "Streaming response contained no assistant token chunks")
+
+    inter_token_ms = [
+        arrivals_ms[i] - arrivals_ms[i - 1]
+        for i in range(1, len(arrivals_ms))
+    ]
+    out = "".join(chunks)
+    prompt_tok = int(usage.get("prompt_tokens", prompt_tokens)) if usage else prompt_tokens
+    out_tok = int(usage.get("completion_tokens", len(chunks))) if usage else len(chunks)
+    return {
+        "latency_ms": elapsed_ms,
+        "ttft_ms": arrivals_ms[0],
+        "inter_token_ms": inter_token_ms,
+        "prompt_tokens": prompt_tok,
+        "out_tokens": out_tok,
+        "output": out,
+    }
 
 
 async def run_scenario(base_url: str, model: str, scenario: dict, c: int) -> dict:
@@ -174,29 +235,38 @@ async def run_scenario(base_url: str, model: str, scenario: dict, c: int) -> dic
     itoks: list[float] = []
     ptoks: list[int] = []
     outtoks: list[int] = []
-    failures = 0
+    timeout_failures = 0
+    http_failures = 0
+    other_failures = 0
+    turns = int(scenario.get("turns", 1))
 
     sem = asyncio.Semaphore(c)
     async with httpx.AsyncClient(timeout=120.0) as client:
         async def run_one() -> None:
-            nonlocal failures
+            nonlocal timeout_failures, http_failures, other_failures
             async with sem:
                 try:
-                    r = await one_request(
+                    r = await one_request_streaming(
                         client, base_url, model, int(scenario["prompt_tokens"]), int(scenario["max_output_tokens"]), turns=turns
                     )
                     latencies.append(r["latency_ms"])
                     ttfts.append(r["ttft_ms"])
-                    itoks.append(r["itok_ms"])
+                    itoks.extend(r["inter_token_ms"])
                     ptoks.append(r["prompt_tokens"])
                     outtoks.append(r["out_tokens"])
-                except Exception:
-                    failures += 1
+                except RequestFailure as exc:
+                    if exc.kind == "timeout":
+                        timeout_failures += 1
+                    elif exc.kind == "http":
+                        http_failures += 1
+                    else:
+                        other_failures += 1
 
         t0 = time.perf_counter()
         await asyncio.gather(*[run_one() for _ in range(req_count)])
         duration_s = max(1e-9, time.perf_counter() - t0)
 
+    failures = timeout_failures + http_failures + other_failures
     success = req_count - failures
     total_out = sum(outtoks)
     total_prompt = sum(ptoks)
@@ -221,8 +291,9 @@ async def run_scenario(base_url: str, model: str, scenario: dict, c: int) -> dic
         "latency_ms_p95": pctl(latencies, 0.95),
         "latency_ms_p99": pctl(latencies, 0.99),
         "success_rate": (success / req_count) if req_count else 0.0,
-        "http_error_rate": (failures / req_count) if req_count else 0.0,
-        "timeout_rate": 0.0,
+        "http_error_rate": (http_failures / req_count) if req_count else 0.0,
+        "timeout_rate": (timeout_failures / req_count) if req_count else 0.0,
+        "other_error_rate": (other_failures / req_count) if req_count else 0.0,
         "total_output_tokens": total_out,
     }
 
@@ -263,7 +334,7 @@ async def main_async(args: argparse.Namespace) -> None:
                         "ttft_ms_p50": 0.0, "ttft_ms_p95": 0.0, "ttft_ms_p99": 0.0,
                         "inter_token_latency_p50": 0.0, "inter_token_latency_p95": 0.0, "inter_token_latency_p99": 0.0,
                         "latency_ms_p50": 0.0, "latency_ms_p95": 0.0, "latency_ms_p99": 0.0,
-                        "success_rate": 1.0, "http_error_rate": 0.0, "timeout_rate": 0.0, "total_output_tokens": 0,
+                        "success_rate": 1.0, "http_error_rate": 0.0, "timeout_rate": 0.0, "other_error_rate": 0.0, "total_output_tokens": 0,
                     })
             det = determinism(["dry", "dry"])
         else:
@@ -273,7 +344,7 @@ async def main_async(args: argparse.Namespace) -> None:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 s1 = await one_request_streaming(client, args.base_url, args.model, 32, 32)
                 s2 = await one_request_streaming(client, args.base_url, args.model, 32, 32)
-            det = determinism([s1, s2])
+            det = determinism([s1["output"], s2["output"]])
 
         if not det["passed"]:
             raise SystemExit("Determinism check failed for temperature=0")
@@ -284,6 +355,10 @@ async def main_async(args: argparse.Namespace) -> None:
 
         gpu_utils = [u for u, _ in gpu_samples]
         gpu_mems = [m for _, m in gpu_samples]
+        gpu_metrics_valid = bool(args.enable_gpu_sampling and gpu_samples)
+        inference_mode = args.inference_mode
+        if inference_mode == "auto":
+            inference_mode = "real_model_inference" if args.system.lower() == "vllm" else "stub_token_generation"
         total_duration_h = sum(r["duration_s"] for r in rows) / 3600.0
         total_output = sum(r["total_output_tokens"] for r in rows)
         cost_usd = args.gpu_hour_usd * args.gpu_count * total_duration_h
@@ -307,6 +382,7 @@ async def main_async(args: argparse.Namespace) -> None:
                     "gpu_util_pct_p50": pctl(gpu_utils, 0.50), "gpu_util_pct_p95": pctl(gpu_utils, 0.95),
                     "gpu_mem_used_mb_p50": pctl(gpu_mems, 0.50), "gpu_mem_used_mb_p95": pctl(gpu_mems, 0.95),
                     "success_rate": r["success_rate"], "http_error_rate": r["http_error_rate"], "timeout_rate": r["timeout_rate"],
+                    "other_error_rate": r["other_error_rate"],
                     "est_dollars_per_million_output_tokens": est_per_million,
                 })
 
@@ -320,6 +396,8 @@ async def main_async(args: argparse.Namespace) -> None:
             "gpu_count": args.gpu_count,
             "gpu_hour_usd": args.gpu_hour_usd,
             "base_url": args.base_url,
+            "inference_mode": inference_mode,
+            "gpu_metrics_valid": gpu_metrics_valid,
             "determinism": det,
             "rows": len(rows),
             "launch_vllm": args.launch_vllm,
@@ -327,6 +405,11 @@ async def main_async(args: argparse.Namespace) -> None:
                 "enabled": args.enable_gpu_sampling,
                 "interval_s": args.gpu_sample_interval_s,
                 "samples_collected": len(gpu_samples),
+            },
+            "metric_notes": {
+                "ttft": "Measured from request send to first streamed assistant token chunk.",
+                "inter_token_latency": "Measured as gaps between streamed assistant token chunk arrivals.",
+                "gpu": "Valid only when gpu_metrics_valid is true; otherwise CSV GPU columns are zeros from missing samples.",
             },
         }
         manifest_path = out_dir / f"{args.run_id}.manifest.json"
@@ -359,6 +442,12 @@ def main() -> None:
     p.add_argument("--output-dir", default="bench/results")
     p.add_argument("--run-id", default=f"run-{dt.datetime.now(dt.UTC).strftime('%Y%m%d%H%M%S')}")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument(
+        "--inference-mode",
+        default="auto",
+        choices=["auto", "stub_token_generation", "real_model_inference", "unknown"],
+        help="Declare whether the endpoint is real model inference or a stub-token runtime.",
+    )
 
     p.add_argument("--launch-vllm", action="store_true")
     p.add_argument("--vllm-host", default="127.0.0.1")

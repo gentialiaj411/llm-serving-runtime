@@ -1,0 +1,16 @@
+{
+  "run_id": "codex-chaos-smoke-20260515",
+  "timestamp_unix_ms": 1778868881140,
+  "base_url": "http://127.0.0.1:8010/v1/chat/completions",
+  "duration_s": 2,
+  "concurrency": 1,
+  "result": {
+    "ok": 38,
+    "fail": 0,
+    "total": 38,
+    "success_rate": 1.0
+  },
+  "injections": [],
+  "sla_target_success_rate": 0.95,
+  "sla_pass": true
+}

@@ -17,5 +17,8 @@
 
 ## Notes
 - Determinism check runs automatically and fails if temperature=0 outputs differ.
+- TTFT and inter-token latency require streaming responses and are measured from streamed assistant token chunks.
 - GPU sampling is time-based via `nvidia-smi` (default every 0.5s) when `--enable-gpu-sampling` is set.
+- Check manifest `inference_mode` before comparing benchmark rows. Local Phase 1/Phase 2 runtimes are `stub_token_generation`; vLLM should be `real_model_inference`.
+- Check manifest `gpu_metrics_valid` before reporting GPU utilization or memory metrics.
 - `--launch-vllm` requires `vllm` to be installed in the current Python environment.

@@ -12,6 +12,7 @@
 - Worker iteration-level continuous batching loop:
   - request admission while active decode is running
   - one-token-per-request decode steps per scheduler tick
+  - streaming token events emitted from the decode loop for harness TTFT/ITL measurement
   - cancellation and deadline checks on each decode iteration
 - Paged KV block allocator wired into worker admission/release:
   - fixed-size block allocation per request
@@ -29,3 +30,8 @@
 - Port the above control/data-plane behaviors from Python runtime to C++ coordinator/worker.
 - Replace HTTP coordinator->worker link with gRPC per proto contract.
 - Replace token stub generation with real model inference kernels.
+
+## Benchmark validity notes
+- The Python Phase 1/Phase 2 services produce deterministic stub tokens. They are useful for API, scheduling, streaming timing, and fault-path validation, but they are not real model inference benchmarks.
+- Harness manifests include `inference_mode`; report Phase 1/Phase 2 results as `stub_token_generation` unless a real model backend is explicitly wired in.
+- Harness manifests include `gpu_metrics_valid`; GPU utilization and memory columns are valid only when that flag is true.

@@ -1,0 +1,30 @@
+{
+  "run_id": "codex-phase2-smoke-20260515",
+  "timestamp_utc": "2026-05-15T18:15:00Z",
+  "system_under_test": "phase2-smoke",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "headline_vllm_version": "0.8.5",
+  "gpu_type": "unknown",
+  "gpu_count": 1,
+  "gpu_hour_usd": 2.5,
+  "base_url": "http://127.0.0.1:8011/v1/chat/completions",
+  "inference_mode": "stub_token_generation",
+  "gpu_metrics_valid": false,
+  "determinism": {
+    "passed": true,
+    "hash_a": "2e3913804e9e711e2fbc02f99cf04ba54958d1270dc9182b4d94b455ffcebb32",
+    "hash_b": "2e3913804e9e711e2fbc02f99cf04ba54958d1270dc9182b4d94b455ffcebb32"
+  },
+  "rows": 1,
+  "launch_vllm": false,
+  "gpu_sampler": {
+    "enabled": false,
+    "interval_s": 0.5,
+    "samples_collected": 0
+  },
+  "metric_notes": {
+    "ttft": "Measured from request send to first streamed assistant token chunk.",
+    "inter_token_latency": "Measured as gaps between streamed assistant token chunk arrivals.",
+    "gpu": "Valid only when gpu_metrics_valid is true; otherwise CSV GPU columns are zeros from missing samples."
+  }
+}

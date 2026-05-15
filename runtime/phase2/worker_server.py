@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import json
 import os
 import time
 from dataclasses import dataclass
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from runtime.phase2.kv_allocator import PagedKVAllocator
 
@@ -26,12 +28,14 @@ class GenerateRequest(BaseModel):
 class Pending:
     req: GenerateRequest
     fut: asyncio.Future
+    stream_queue: asyncio.Queue | None = None
 
 
 @dataclass
 class ActiveState:
     req: GenerateRequest
     fut: asyncio.Future
+    stream_queue: asyncio.Queue | None
     words: list[str]
     generated: list[str]
     cursor: int
@@ -77,6 +81,7 @@ async def _continuous_batch_loop() -> None:
             _active[pending.req.request_id] = ActiveState(
                 req=pending.req,
                 fut=pending.fut,
+                stream_queue=pending.stream_queue,
                 words=words,
                 generated=[],
                 cursor=0,
@@ -95,23 +100,31 @@ async def _continuous_batch_loop() -> None:
             if rid in _cancelled:
                 if not state.fut.done():
                     state.fut.set_result({"request_id": rid, "text": "", "cancelled": True})
+                if state.stream_queue is not None:
+                    state.stream_queue.put_nowait({"type": "cancelled"})
                 finished_ids.append(rid)
                 continue
 
             if state.req.deadline_unix_ms is not None and now_ms > state.req.deadline_unix_ms:
                 if not state.fut.done():
                     state.fut.set_result({"request_id": rid, "text": "", "timed_out": True})
+                if state.stream_queue is not None:
+                    state.stream_queue.put_nowait({"type": "timed_out"})
                 finished_ids.append(rid)
                 continue
 
             token = state.words[state.cursor % len(state.words)]
             state.generated.append(token)
             state.cursor += 1
+            if state.stream_queue is not None:
+                state.stream_queue.put_nowait({"type": "token", "token": token, "index": state.cursor - 1})
 
             if len(state.generated) >= state.req.max_tokens:
                 text = " ".join(state.generated)
                 if not state.fut.done():
                     state.fut.set_result({"request_id": rid, "text": text, "cancelled": False})
+                if state.stream_queue is not None:
+                    state.stream_queue.put_nowait({"type": "done", "text": text})
                 finished_ids.append(rid)
 
         for rid in finished_ids:
@@ -141,6 +154,25 @@ async def generate(req: GenerateRequest) -> dict[str, Any]:
     fut: asyncio.Future = loop.create_future()
     await _queue.put(Pending(req=req, fut=fut))
     return await fut
+
+
+@app.post("/generate_stream")
+async def generate_stream(req: GenerateRequest) -> StreamingResponse:
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future = loop.create_future()
+    stream_queue: asyncio.Queue = asyncio.Queue()
+    await _queue.put(Pending(req=req, fut=fut, stream_queue=stream_queue))
+
+    async def events() -> Any:
+        while True:
+            event = await stream_queue.get()
+            yield json.dumps(event) + "\n"
+            if event.get("type") in {"done", "cancelled", "timed_out"}:
+                break
+        if not fut.done():
+            fut.cancel()
+
+    return StreamingResponse(events(), media_type="application/x-ndjson")
 
 
 @app.post("/cancel/{request_id}")

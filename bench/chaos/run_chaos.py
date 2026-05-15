@@ -12,6 +12,25 @@ from pathlib import Path
 import httpx
 
 
+def is_pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        try:
+            out = subprocess.check_output(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        except Exception:
+            return False
+        return any(line.strip().strip('"') and "INFO:" not in line for line in out.splitlines())
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
 async def spam_requests(base_url: str, model: str, concurrency: int, duration_s: int) -> dict:
     stop_at = time.time() + duration_s
     ok = 0
@@ -52,14 +71,8 @@ def kill_random_worker(worker_pids: list[int]) -> int | None:
     is_windows = os.name == "nt"
     alive = []
     for pid in worker_pids:
-        try:
-            if is_windows:
-                subprocess.check_call(["tasklist", "/FI", f"PID eq {pid}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                os.kill(pid, 0)
+        if is_pid_alive(pid):
             alive.append(pid)
-        except Exception:
-            pass
     if not alive:
         return None
     victim = random.choice(alive)

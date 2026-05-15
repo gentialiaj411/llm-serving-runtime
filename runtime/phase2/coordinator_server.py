@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="phase2-coordinator")
@@ -100,6 +101,106 @@ def _choose_worker() -> WorkerState:
     return min(healthy, key=lambda w: w.inflight)
 
 
+def _stream_chunk(model: str, content: str) -> str:
+    payload = {
+        "id": "chatcmpl-phase2",
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+    }
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def _stream_done(model: str, prompt_tokens: int, completion_tokens: int) -> str:
+    payload = {
+        "id": "chatcmpl-phase2",
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    }
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+async def _worker_stream(
+    req: ChatRequest,
+    prompt: str,
+    request_id: str,
+    worker: WorkerState,
+    deadline_ms: int | None,
+) -> Any:
+    generated: list[str] = []
+    prompt_tokens = max(1, len(prompt.split()))
+    try:
+        timeout_s = 30.0
+        if deadline_ms is not None:
+            timeout_s = max(0.050, (deadline_ms - int(time.time() * 1000)) / 1000.0)
+
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                f"{worker.url}/generate_stream",
+                json={
+                    "request_id": request_id,
+                    "prompt": prompt,
+                    "max_tokens": req.max_tokens,
+                    "temperature": req.temperature,
+                    "deadline_unix_ms": deadline_ms,
+                },
+                timeout=timeout_s,
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    event = json.loads(line)
+                    kind = event.get("type")
+                    if kind == "token":
+                        token = str(event.get("token", ""))
+                        generated.append(token)
+                        content = token if len(generated) == 1 else f" {token}"
+                        yield _stream_chunk(req.model, content)
+                    elif kind == "done":
+                        text = " ".join(generated)
+                        result = {
+                            "id": "chatcmpl-phase2",
+                            "object": "chat.completion",
+                            "created": int(time.time()),
+                            "model": req.model,
+                            "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+                            "usage": {
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": max(1, len(generated)),
+                                "total_tokens": prompt_tokens + max(1, len(generated)),
+                            },
+                        }
+                        _completed_cache[request_id] = result
+                        _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "completed", "request_id": request_id, "response": result})
+                        yield _stream_done(req.model, prompt_tokens, max(1, len(generated)))
+                        yield "data: [DONE]\n\n"
+                        break
+                    elif kind == "timed_out":
+                        _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "timed_out", "request_id": request_id})
+                        break
+                    elif kind == "cancelled":
+                        _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "cancelled", "request_id": request_id})
+                        break
+    except httpx.TimeoutException:
+        _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "timed_out", "request_id": request_id})
+    except Exception:
+        _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "failed", "request_id": request_id})
+        raise
+    finally:
+        _active.pop(request_id, None)
+        worker.inflight = max(0, worker.inflight - 1)
+
+
 @app.on_event("startup")
 async def startup() -> None:
     worker_urls = os.getenv("WORKER_URLS", "http://127.0.0.1:8102")
@@ -140,6 +241,12 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any]:
             "deadline_ms": deadline_ms,
         }
     )
+
+    if req.stream:
+        return StreamingResponse(
+            _worker_stream(req, prompt, request_id, worker, deadline_ms),
+            media_type="text/event-stream",
+        )
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
