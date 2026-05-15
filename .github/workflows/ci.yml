@@ -1,0 +1,16 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  phase0_2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r bench/harness/requirements.txt
+      - name: Harness dry run
+        run: python bench/harness/run.py --dry-run --system ci-dry --run-id ci-dry

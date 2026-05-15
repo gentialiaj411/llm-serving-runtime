@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["run_id","system_under_test","model_id","rows"],
+  "properties": {
+    "run_id": {"type":"string"},
+    "system_under_test": {"type":"string"},
+    "model_id": {"type":"string"},
+    "rows": {"type":"array"}
+  }
+}

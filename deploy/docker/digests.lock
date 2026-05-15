@@ -1,0 +1,4 @@
+images:
+  vllm_headline_version: "0.8.5"
+  dev_base: "nvidia/cuda:12.4.1-devel-ubuntu22.04"
+  notes: "Record resolved immutable digests after first build in this file."

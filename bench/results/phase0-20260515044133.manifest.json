@@ -1,0 +1,15 @@
+{
+  "run_id": "phase0-20260515044133",
+  "timestamp_utc": "2026-05-15T04:41:33Z",
+  "system_under_test": "vllm",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "headline_vllm_version": "0.8.5",
+  "docker_image_digest": "pending",
+  "git_sha": "pending",
+  "determinism": {
+    "passed": true,
+    "hash_a": "6d0b1e8d3ad2eea2e8b790113aeaac3a1102855ab5866b7c4f9995fd33b2f2e4",
+    "hash_b": "6d0b1e8d3ad2eea2e8b790113aeaac3a1102855ab5866b7c4f9995fd33b2f2e4"
+  },
+  "rows": 6
+}

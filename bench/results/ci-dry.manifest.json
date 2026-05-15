@@ -1,0 +1,14 @@
+{
+  "run_id": "ci-dry",
+  "timestamp_utc": "2026-05-15T04:45:53Z",
+  "system_under_test": "ci-dry",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "headline_vllm_version": "0.8.5",
+  "determinism": {
+    "passed": true,
+    "hash_a": "bb0757490ca7b10677c96917896c90497c30e5dbb0a8270c274804f595455b57",
+    "hash_b": "bb0757490ca7b10677c96917896c90497c30e5dbb0a8270c274804f595455b57"
+  },
+  "rows": 6,
+  "base_url": "http://127.0.0.1:8000/v1/chat/completions"
+}

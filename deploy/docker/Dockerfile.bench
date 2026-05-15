@@ -1,0 +1,2 @@
+FROM vllm/vllm-openai:v0.8.5
+RUN pip install --no-cache-dir -r /tmp/requirements.txt || true

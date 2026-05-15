@@ -1,0 +1,27 @@
+version: "1"
+scenarios:
+  - id: short_short
+    concurrency: [1, 8, 32]
+    prompt_tokens: 128
+    max_output_tokens: 64
+  - id: short_long
+    concurrency: [1, 8, 32]
+    prompt_tokens: 128
+    max_output_tokens: 512
+  - id: long_short
+    concurrency: [1, 8, 16]
+    prompt_tokens: 4096
+    max_output_tokens: 64
+  - id: long_long
+    concurrency: [1, 4, 8]
+    prompt_tokens: 4096
+    max_output_tokens: 512
+  - id: mixed_concurrency
+    concurrency: [1, 4, 16, 64]
+    prompt_tokens: 512
+    max_output_tokens: 128
+  - id: chat_multiturn
+    concurrency: [1, 8, 32]
+    prompt_tokens: 1024
+    max_output_tokens: 256
+    turns: 4

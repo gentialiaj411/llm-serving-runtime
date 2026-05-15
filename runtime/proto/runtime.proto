@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package runtime.v1;
+
+service WorkerService {
+  rpc Generate(GenerateRequest) returns (GenerateResponse);
+}
+
+message GenerateRequest {
+  string request_id = 1;
+  string prompt = 2;
+  uint32 max_tokens = 3;
+  float temperature = 4;
+}
+
+message GenerateResponse {
+  string request_id = 1;
+  string text = 2;
+  repeated string tokens = 3;
+}
