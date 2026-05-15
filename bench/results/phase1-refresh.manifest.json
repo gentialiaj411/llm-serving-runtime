@@ -1,0 +1,17 @@
+{
+  "run_id": "phase1-refresh",
+  "timestamp_utc": "2026-05-15T05:26:26Z",
+  "system_under_test": "phase1",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "headline_vllm_version": "0.8.5",
+  "gpu_type": "unknown",
+  "gpu_count": 1,
+  "gpu_hour_usd": 2.5,
+  "base_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "determinism": {
+    "passed": true,
+    "hash_a": "2e3913804e9e711e2fbc02f99cf04ba54958d1270dc9182b4d94b455ffcebb32",
+    "hash_b": "2e3913804e9e711e2fbc02f99cf04ba54958d1270dc9182b4d94b455ffcebb32"
+  },
+  "rows": 6
+}

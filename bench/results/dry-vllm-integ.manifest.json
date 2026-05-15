@@ -1,0 +1,23 @@
+{
+  "run_id": "dry-vllm-integ",
+  "timestamp_utc": "2026-05-15T15:46:52Z",
+  "system_under_test": "phase1",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "headline_vllm_version": "0.8.5",
+  "gpu_type": "unknown",
+  "gpu_count": 1,
+  "gpu_hour_usd": 2.5,
+  "base_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "determinism": {
+    "passed": true,
+    "hash_a": "b755cb248c3c4a7d94f835b4421809336e7015850342064be4dfa23349dcdcaa",
+    "hash_b": "b755cb248c3c4a7d94f835b4421809336e7015850342064be4dfa23349dcdcaa"
+  },
+  "rows": 6,
+  "launch_vllm": false,
+  "gpu_sampler": {
+    "enabled": true,
+    "interval_s": 0.5,
+    "samples_collected": 0
+  }
+}
