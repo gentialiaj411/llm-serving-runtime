@@ -1,0 +1,46 @@
+{
+  "date_utc": "2026-05-15",
+  "runtime_benchmark_summary": {
+    "scenarios": 6,
+    "avg_tokens_per_sec_output": 61.20037772996586,
+    "avg_latency_ms_p50": 4065.729616666677,
+    "avg_latency_ms_p99": 4164.659233333301,
+    "avg_ttft_ms_p50": 4065.729616666677,
+    "avg_success_rate": 1.0
+  },
+  "chaos_sla95": {
+    "run_id": "chaos-final-local-sla95",
+    "timestamp_unix_ms": 1778865359910,
+    "base_url": "http://127.0.0.1:8000/v1/chat/completions",
+    "duration_s": 45,
+    "concurrency": 3,
+    "result": {
+      "ok": 196,
+      "fail": 3,
+      "total": 199,
+      "success_rate": 0.9849246231155779
+    },
+    "injections": [
+      {
+        "ts": 1778865329640,
+        "killed_pid": 29624
+      },
+      {
+        "ts": 1778865359910,
+        "killed_pid": 5508
+      }
+    ],
+    "sla_target_success_rate": 0.95,
+    "sla_pass": true
+  },
+  "artifacts": {
+    "runtime_csv": "C:\\Users\\bhask\\Documents\\PROJECTS\\orcaforge\\bench\\results\\runtime-final-local.csv",
+    "runtime_manifest": "C:\\Users\\bhask\\Documents\\PROJECTS\\orcaforge\\bench\\results\\runtime-final-local.manifest.json",
+    "chaos_json": "C:\\Users\\bhask\\Documents\\PROJECTS\\orcaforge\\bench\\results\\chaos-final-local-sla95.json"
+  },
+  "vllm_baseline_status": {
+    "status": "blocked_on_local_gpu_arch",
+    "details": "vLLM 0.8.5 runtime failed with CUDA kernel image unavailable for sm_120 on RTX 5070 Laptop GPU",
+    "next_step": "Run vLLM baseline on A100/H100 or compatible Ada host and import generated CSV+manifest into bench/results/"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "run_id": "chaos-final-local-sla95",
+  "timestamp_unix_ms": 1778865359910,
+  "base_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "duration_s": 45,
+  "concurrency": 3,
+  "result": {
+    "ok": 196,
+    "fail": 3,
+    "total": 199,
+    "success_rate": 0.9849246231155779
+  },
+  "injections": [
+    {
+      "ts": 1778865329640,
+      "killed_pid": 29624
+    },
+    {
+      "ts": 1778865359910,
+      "killed_pid": 5508
+    }
+  ],
+  "sla_target_success_rate": 0.95,
+  "sla_pass": true
+}

@@ -1,0 +1,29 @@
+{
+  "run_id": "chaos-final-local",
+  "timestamp_unix_ms": 1778865201256,
+  "base_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "duration_s": 45,
+  "concurrency": 4,
+  "result": {
+    "ok": 210,
+    "fail": 533,
+    "total": 743,
+    "success_rate": 0.28263795423956933
+  },
+  "injections": [
+    {
+      "ts": 1778865160907,
+      "killed_pid": 13480
+    },
+    {
+      "ts": 1778865181075,
+      "killed_pid": 5136
+    },
+    {
+      "ts": 1778865201256,
+      "killed_pid": 13480
+    }
+  ],
+  "sla_target_success_rate": 0.8,
+  "sla_pass": false
+}

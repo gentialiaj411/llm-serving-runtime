@@ -7,6 +7,16 @@
       "generator": "Ninja",
       "binaryDir": "build",
       "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}
+    },
+    {
+      "name": "windows-vcpkg-vs2022",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "build-vcpkg",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "C:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
     }
   ]
 }

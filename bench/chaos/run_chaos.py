@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import random
-import signal
 import subprocess
 import time
 from pathlib import Path
@@ -17,11 +17,10 @@ async def spam_requests(base_url: str, model: str, concurrency: int, duration_s:
     ok = 0
     fail = 0
 
-    sem = asyncio.Semaphore(concurrency)
     async with httpx.AsyncClient(timeout=20.0) as client:
-        async def one() -> None:
+        async def worker_loop() -> None:
             nonlocal ok, fail
-            async with sem:
+            while time.time() < stop_at:
                 body = {
                     "model": model,
                     "messages": [{"role": "user", "content": "chaos test prompt"}],
@@ -36,15 +35,9 @@ async def spam_requests(base_url: str, model: str, concurrency: int, duration_s:
                         fail += 1
                 except Exception:
                     fail += 1
+                await asyncio.sleep(0.01)
 
-        tasks = []
-        while time.time() < stop_at:
-            tasks.append(asyncio.create_task(one()))
-            if len(tasks) > 200:
-                await asyncio.gather(*tasks)
-                tasks.clear()
-        if tasks:
-            await asyncio.gather(*tasks)
+        await asyncio.gather(*[asyncio.create_task(worker_loop()) for _ in range(concurrency)])
 
     total = ok + fail
     return {
@@ -56,17 +49,27 @@ async def spam_requests(base_url: str, model: str, concurrency: int, duration_s:
 
 
 def kill_random_worker(worker_pids: list[int]) -> int | None:
+    is_windows = os.name == "nt"
     alive = []
     for pid in worker_pids:
         try:
-            subprocess.check_call(["tasklist", "/FI", f"PID eq {pid}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if is_windows:
+                subprocess.check_call(["tasklist", "/FI", f"PID eq {pid}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                os.kill(pid, 0)
             alive.append(pid)
         except Exception:
             pass
     if not alive:
         return None
     victim = random.choice(alive)
-    subprocess.call(["taskkill", "/PID", str(victim), "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if is_windows:
+        subprocess.call(["taskkill", "/PID", str(victim), "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        try:
+            os.kill(victim, 9)
+        except Exception:
+            return None
     return victim
 
 

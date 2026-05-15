@@ -35,8 +35,16 @@ def pctl(values: list[float], q: float) -> float:
     return float(xs[max(0, min(i, len(xs) - 1))])
 
 
-def make_prompt(tokens: int) -> str:
-    return " ".join(f"tok{i % 100}" for i in range(tokens))
+def make_prompt(tokens: int, turns: int = 1) -> str:
+    if turns <= 1:
+        return " ".join(f"tok{i % 100}" for i in range(tokens))
+    per_turn = max(1, tokens // turns)
+    messages = []
+    for t in range(turns):
+        role = "User" if t % 2 == 0 else "Assistant"
+        content = " ".join(f"tok{(t * per_turn + i) % 100}" for i in range(per_turn))
+        messages.append(f"{role}: {content}")
+    return "\n".join(messages)
 
 
 def get_gpu_snapshot() -> tuple[float, float] | None:
@@ -111,8 +119,10 @@ def launch_vllm(args: argparse.Namespace) -> subprocess.Popen[str] | None:
     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
 
 
-async def one_request(client: httpx.AsyncClient, url: str, model: str, prompt_tokens: int, max_out: int) -> dict:
-    prompt = make_prompt(prompt_tokens)
+async def one_request(
+    client: httpx.AsyncClient, url: str, model: str, prompt_tokens: int, max_out: int, turns: int = 1
+) -> dict:
+    prompt = make_prompt(prompt_tokens, turns=turns)
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -138,8 +148,26 @@ async def one_request(client: httpx.AsyncClient, url: str, model: str, prompt_to
     }
 
 
-async def run_scenario(base_url: str, model: str, scenario: dict) -> dict:
-    c = scenario["concurrency"][0]
+async def one_request_streaming(
+    client: httpx.AsyncClient, url: str, model: str, prompt_tokens: int, max_out: int, turns: int = 1
+) -> str:
+    prompt = make_prompt(prompt_tokens, turns=turns)
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_out,
+        "temperature": 0.0,
+        "stream": True,
+    }
+    chunks: list[str] = []
+    async with client.stream("POST", url, json=body) as resp:
+        resp.raise_for_status()
+        async for chunk in resp.aiter_text():
+            chunks.append(chunk)
+    return "".join(chunks)
+
+
+async def run_scenario(base_url: str, model: str, scenario: dict, c: int) -> dict:
     req_count = max(20, c * 6)
     latencies: list[float] = []
     ttfts: list[float] = []
@@ -154,7 +182,9 @@ async def run_scenario(base_url: str, model: str, scenario: dict) -> dict:
             nonlocal failures
             async with sem:
                 try:
-                    r = await one_request(client, base_url, model, int(scenario["prompt_tokens"]), int(scenario["max_output_tokens"]))
+                    r = await one_request(
+                        client, base_url, model, int(scenario["prompt_tokens"]), int(scenario["max_output_tokens"]), turns=turns
+                    )
                     latencies.append(r["latency_ms"])
                     ttfts.append(r["ttft_ms"])
                     itoks.append(r["itok_ms"])
@@ -224,24 +254,26 @@ async def main_async(args: argparse.Namespace) -> None:
 
         if args.dry_run:
             for s in scenarios:
-                rows.append({
-                    "scenario_id": s["id"], "concurrency": s["concurrency"][0], "request_count": max(20, s["concurrency"][0] * 6),
-                    "duration_s": 1.0, "prompt_tokens_p50": float(s.get("prompt_tokens", 0)), "prompt_tokens_mean": float(s.get("prompt_tokens", 0)),
-                    "prompt_tokens_p95": float(s.get("prompt_tokens", 0)), "gen_tokens_mean": float(s.get("max_output_tokens", 0)),
-                    "tokens_per_sec_output": 0.0, "tokens_per_sec_total": 0.0,
-                    "ttft_ms_p50": 0.0, "ttft_ms_p95": 0.0, "ttft_ms_p99": 0.0,
-                    "inter_token_latency_p50": 0.0, "inter_token_latency_p95": 0.0, "inter_token_latency_p99": 0.0,
-                    "latency_ms_p50": 0.0, "latency_ms_p95": 0.0, "latency_ms_p99": 0.0,
-                    "success_rate": 1.0, "http_error_rate": 0.0, "timeout_rate": 0.0, "total_output_tokens": 0,
-                })
+                for c in s["concurrency"]:
+                    rows.append({
+                        "scenario_id": s["id"], "concurrency": c, "request_count": max(20, c * 6),
+                        "duration_s": 1.0, "prompt_tokens_p50": float(s.get("prompt_tokens", 0)), "prompt_tokens_mean": float(s.get("prompt_tokens", 0)),
+                        "prompt_tokens_p95": float(s.get("prompt_tokens", 0)), "gen_tokens_mean": float(s.get("max_output_tokens", 0)),
+                        "tokens_per_sec_output": 0.0, "tokens_per_sec_total": 0.0,
+                        "ttft_ms_p50": 0.0, "ttft_ms_p95": 0.0, "ttft_ms_p99": 0.0,
+                        "inter_token_latency_p50": 0.0, "inter_token_latency_p95": 0.0, "inter_token_latency_p99": 0.0,
+                        "latency_ms_p50": 0.0, "latency_ms_p95": 0.0, "latency_ms_p99": 0.0,
+                        "success_rate": 1.0, "http_error_rate": 0.0, "timeout_rate": 0.0, "total_output_tokens": 0,
+                    })
             det = determinism(["dry", "dry"])
         else:
             for s in scenarios:
-                rows.append(await run_scenario(args.base_url, args.model, s))
+                for c in s["concurrency"]:
+                    rows.append(await run_scenario(args.base_url, args.model, s, int(c)))
             async with httpx.AsyncClient(timeout=120.0) as client:
-                r1 = await one_request(client, args.base_url, args.model, 32, 32)
-                r2 = await one_request(client, args.base_url, args.model, 32, 32)
-            det = determinism([r1["output"], r2["output"]])
+                s1 = await one_request_streaming(client, args.base_url, args.model, 32, 32)
+                s2 = await one_request_streaming(client, args.base_url, args.model, 32, 32)
+            det = determinism([s1, s2])
 
         if not det["passed"]:
             raise SystemExit("Determinism check failed for temperature=0")
