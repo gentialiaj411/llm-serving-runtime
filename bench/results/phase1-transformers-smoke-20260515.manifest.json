@@ -1,0 +1,33 @@
+{
+  "run_id": "phase1-transformers-smoke-20260515",
+  "timestamp_utc": "2026-05-15T18:39:19Z",
+  "system_under_test": "phase1-transformers",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "headline_vllm_version": "0.8.5",
+  "gpu_type": "RTX5070Laptop",
+  "gpu_count": 1,
+  "gpu_hour_usd": 0.8,
+  "base_url": "http://127.0.0.1:8091/v1/chat/completions",
+  "inference_mode": "real_model_inference",
+  "gpu_metrics_valid": true,
+  "determinism": {
+    "passed": true,
+    "hash_a": "bd486d77890ba94d6a36e4d1d4302320632eb3e8c676a44e813ecf1f9011cf74",
+    "hash_b": "bd486d77890ba94d6a36e4d1d4302320632eb3e8c676a44e813ecf1f9011cf74",
+    "mode": "warn"
+  },
+  "aggregate_est_dollars_per_million_output_tokens": 4.44443163398699,
+  "rows": 1,
+  "launch_vllm": false,
+  "warmup_requests_per_scenario": 1,
+  "gpu_sampler": {
+    "enabled": true,
+    "interval_s": 0.5,
+    "samples_collected": 130
+  },
+  "metric_notes": {
+    "ttft": "Measured from request send to first streamed assistant token chunk.",
+    "inter_token_latency": "Measured as gaps between streamed assistant token chunk arrivals.",
+    "gpu": "Valid only when gpu_metrics_valid is true; otherwise CSV GPU columns are zeros from missing samples."
+  }
+}

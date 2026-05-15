@@ -2,6 +2,13 @@
 
 Distributed transformer inference runtime with OpenAI-compatible API and reproducible benchmarking against vLLM.
 
+## Design
+- [Design notes](docs/design.md) summarize the systems choices behind Orca-style iteration-level scheduling, paged KV allocation, streaming retry boundaries, and coordinator routing.
+- Real-inference smoke artifacts live in `bench/results/` for Phase 1 Transformers and vLLM on TinyLlama-1.1B.
+- Generate the comparison chart with `python bench/scripts/plot_comparison.py`; output is written to `bench/results/comparison.png`.
+
+![Real-inference smoke comparison](bench/results/comparison.png)
+
 ## Phase 0 status
 - Repo scaffolded
 - Benchmark harness skeleton + CSV/manifest schema

@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import collections
+from contextlib import asynccontextmanager
 import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from runtime.phase2.kv_allocator import PagedKVAllocator
 
-app = FastAPI(title="phase2-worker")
+CANCELLED_TTL_S = float(os.getenv("WORKER_CANCELLED_TTL_S", "3600"))
+CANCELLED_CACHE_MAX = int(os.getenv("WORKER_CANCELLED_CACHE_MAX", "10000"))
 
 
 class GenerateRequest(BaseModel):
@@ -42,10 +44,52 @@ class ActiveState:
 
 
 _queue: asyncio.Queue[Pending] = asyncio.Queue()
-_cancelled: set[str] = set()
+_cancelled: collections.OrderedDict[str, float] = collections.OrderedDict()
 _active: dict[str, ActiveState] = {}
 _waiting: collections.deque[Pending] = collections.deque()
 _allocator: PagedKVAllocator | None = None
+_batch_task: asyncio.Task | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    global _allocator, _batch_task
+    total_blocks = int(os.getenv("KV_TOTAL_BLOCKS", "4096"))
+    block_size_tokens = int(os.getenv("KV_BLOCK_SIZE_TOKENS", "16"))
+    _allocator = PagedKVAllocator(total_blocks=total_blocks, block_size_tokens=block_size_tokens)
+    _batch_task = asyncio.create_task(_continuous_batch_loop())
+    try:
+        yield
+    finally:
+        if _batch_task is not None:
+            _batch_task.cancel()
+            try:
+                await _batch_task
+            except asyncio.CancelledError:
+                pass
+
+
+app = FastAPI(title="phase2-worker", lifespan=lifespan)
+
+
+def _prune_cancelled(now: float | None = None) -> None:
+    now = now or time.time()
+    expired = [rid for rid, ts in _cancelled.items() if now - ts > CANCELLED_TTL_S]
+    for rid in expired:
+        _cancelled.pop(rid, None)
+    while len(_cancelled) > CANCELLED_CACHE_MAX:
+        _cancelled.popitem(last=False)
+
+
+def _mark_cancelled(request_id: str) -> None:
+    _cancelled[request_id] = time.time()
+    _cancelled.move_to_end(request_id)
+    _prune_cancelled()
+
+
+def _is_cancelled(request_id: str) -> bool:
+    _prune_cancelled()
+    return request_id in _cancelled
 
 
 async def _continuous_batch_loop() -> None:
@@ -97,7 +141,7 @@ async def _continuous_batch_loop() -> None:
         finished_ids: list[str] = []
 
         for rid, state in list(_active.items()):
-            if rid in _cancelled:
+            if _is_cancelled(rid):
                 if not state.fut.done():
                     state.fut.set_result({"request_id": rid, "text": "", "cancelled": True})
                 if state.stream_queue is not None:
@@ -131,16 +175,7 @@ async def _continuous_batch_loop() -> None:
             _active.pop(rid, None)
             if _allocator is not None:
                 _allocator.free_request(rid)
-            _cancelled.discard(rid)
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    global _allocator
-    total_blocks = int(os.getenv("KV_TOTAL_BLOCKS", "4096"))
-    block_size_tokens = int(os.getenv("KV_BLOCK_SIZE_TOKENS", "16"))
-    _allocator = PagedKVAllocator(total_blocks=total_blocks, block_size_tokens=block_size_tokens)
-    asyncio.create_task(_continuous_batch_loop())
+            _cancelled.pop(rid, None)
 
 
 @app.get("/healthz")
@@ -177,7 +212,7 @@ async def generate_stream(req: GenerateRequest) -> StreamingResponse:
 
 @app.post("/cancel/{request_id}")
 async def cancel(request_id: str) -> dict[str, str]:
-    _cancelled.add(request_id)
+    _mark_cancelled(request_id)
     return {"request_id": request_id, "status": "cancel_accepted"}
 
 

@@ -37,5 +37,43 @@ jobs:
           PY
       - name: Harness streaming smoke
         run: python bench/harness/run.py --system ci-smoke --inference-mode stub_token_generation --scenarios bench/scenarios/smoke.yaml --base-url http://127.0.0.1:8000/v1/chat/completions --run-id ci-smoke
-      - name: Chaos smoke
-        run: python bench/chaos/run_chaos.py --run-id ci-chaos-smoke --base-url http://127.0.0.1:8000/v1/chat/completions --worker-pids 99999999 --duration-s 1 --concurrency 1 --kill-interval-s 1 --output bench/results/ci-chaos-smoke.json
+      - name: Start split runtime
+        run: |
+          python -m uvicorn runtime.phase2.worker_server:app --host 127.0.0.1 --port 8102 > worker1.log 2>&1 &
+          echo $! > worker1.pid
+          python -m uvicorn runtime.phase2.worker_server:app --host 127.0.0.1 --port 8103 > worker2.log 2>&1 &
+          echo $! > worker2.pid
+          WORKER_URLS=http://127.0.0.1:8102,http://127.0.0.1:8103 python -m uvicorn runtime.phase2.coordinator_server:app --host 127.0.0.1 --port 8001 > coordinator.log 2>&1 &
+          echo $! > coordinator.pid
+          python - <<'PY'
+          import time
+          import httpx
+
+          deadline = time.time() + 30
+          while time.time() < deadline:
+              try:
+                  r = httpx.get("http://127.0.0.1:8001/healthz", timeout=2.0)
+                  if r.status_code == 200 and r.json().get("workers_healthy", 0) >= 2:
+                      raise SystemExit(0)
+              except Exception:
+                  pass
+              time.sleep(0.5)
+          raise SystemExit("split runtime did not become healthy")
+          PY
+      - name: Split runtime harness smoke
+        run: python bench/harness/run.py --system ci-phase2-smoke --inference-mode stub_token_generation --scenarios bench/scenarios/smoke.yaml --base-url http://127.0.0.1:8001/v1/chat/completions --run-id ci-phase2-smoke
+      - name: Chaos smoke kills a real worker
+        run: |
+          python bench/chaos/run_chaos.py --run-id ci-chaos-smoke --base-url http://127.0.0.1:8001/v1/chat/completions --worker-pids "$(cat worker1.pid),$(cat worker2.pid)" --duration-s 5 --concurrency 2 --kill-interval-s 1 --max-kills 1 --require-injection --sla-target 0.50 --output bench/results/ci-chaos-smoke.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          result = json.loads(Path("bench/results/ci-chaos-smoke.json").read_text())
+          assert result["injection_count"] >= 1, result
+          assert result["sla_pass"], result
+          PY
+      - name: C++ skeleton build
+        run: |
+          cmake -S . -B build/ci -DBUILD_CPP_RUNTIME=ON -DENABLE_CUDA_WORKER=OFF
+          cmake --build build/ci --config Release

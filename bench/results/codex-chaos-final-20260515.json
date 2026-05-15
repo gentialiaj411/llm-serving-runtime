@@ -1,0 +1,22 @@
+{
+  "run_id": "codex-chaos-final-20260515",
+  "timestamp_unix_ms": 1778871608815,
+  "base_url": "http://127.0.0.1:8097/v1/chat/completions",
+  "duration_s": 5,
+  "concurrency": 2,
+  "result": {
+    "ok": 14,
+    "fail": 0,
+    "total": 14,
+    "success_rate": 1.0
+  },
+  "injections": [
+    {
+      "ts": 1778871605024,
+      "killed_pid": 15912
+    }
+  ],
+  "injection_count": 1,
+  "sla_target_success_rate": 0.5,
+  "sla_pass": true
+}

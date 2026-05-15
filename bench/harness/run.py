@@ -228,7 +228,7 @@ async def one_request_streaming(
     }
 
 
-async def run_scenario(base_url: str, model: str, scenario: dict, c: int) -> dict:
+async def run_scenario(base_url: str, model: str, scenario: dict, c: int, warmup_requests: int = 1) -> dict:
     req_count = max(20, c * 6)
     latencies: list[float] = []
     ttfts: list[float] = []
@@ -242,6 +242,19 @@ async def run_scenario(base_url: str, model: str, scenario: dict, c: int) -> dic
 
     sem = asyncio.Semaphore(c)
     async with httpx.AsyncClient(timeout=120.0) as client:
+        for _ in range(max(0, warmup_requests)):
+            try:
+                await one_request_streaming(
+                    client,
+                    base_url,
+                    model,
+                    int(scenario["prompt_tokens"]),
+                    int(scenario["max_output_tokens"]),
+                    turns=turns,
+                )
+            except RequestFailure:
+                pass
+
         async def run_one() -> None:
             nonlocal timeout_failures, http_failures, other_failures
             async with sem:
@@ -304,6 +317,14 @@ def determinism(outputs: list[str]) -> dict:
     return {"passed": h1 == h2, "hash_a": h1, "hash_b": h2}
 
 
+def row_cost_per_million(row: dict, gpu_hour_usd: float, gpu_count: int) -> float:
+    total_output = float(row.get("total_output_tokens", 0) or 0)
+    if total_output <= 0:
+        return 0.0
+    row_cost_usd = gpu_hour_usd * gpu_count * (float(row["duration_s"]) / 3600.0)
+    return row_cost_usd / (total_output / 1_000_000.0)
+
+
 async def main_async(args: argparse.Namespace) -> None:
     vllm_proc = None
     gpu_samples: list[tuple[float, float]] = []
@@ -340,14 +361,18 @@ async def main_async(args: argparse.Namespace) -> None:
         else:
             for s in scenarios:
                 for c in s["concurrency"]:
-                    rows.append(await run_scenario(args.base_url, args.model, s, int(c)))
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                s1 = await one_request_streaming(client, args.base_url, args.model, 32, 32)
-                s2 = await one_request_streaming(client, args.base_url, args.model, 32, 32)
-            det = determinism([s1["output"], s2["output"]])
+                    rows.append(await run_scenario(args.base_url, args.model, s, int(c), args.warmup_requests))
+            if args.determinism_check == "skip":
+                det = {"passed": True, "skipped": True, "reason": "disabled by --determinism-check skip"}
+            else:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    s1 = await one_request_streaming(client, args.base_url, args.model, 32, 32)
+                    s2 = await one_request_streaming(client, args.base_url, args.model, 32, 32)
+                det = determinism([s1["output"], s2["output"]])
 
-        if not det["passed"]:
+        if not det["passed"] and args.determinism_check == "strict":
             raise SystemExit("Determinism check failed for temperature=0")
+        det["mode"] = args.determinism_check
 
         sampler_stop.set()
         if sampler_task is not None:
@@ -362,7 +387,7 @@ async def main_async(args: argparse.Namespace) -> None:
         total_duration_h = sum(r["duration_s"] for r in rows) / 3600.0
         total_output = sum(r["total_output_tokens"] for r in rows)
         cost_usd = args.gpu_hour_usd * args.gpu_count * total_duration_h
-        est_per_million = (cost_usd / (total_output / 1_000_000.0)) if total_output > 0 else 0.0
+        aggregate_est_per_million = (cost_usd / (total_output / 1_000_000.0)) if total_output > 0 else 0.0
 
         csv_path = out_dir / f"{args.run_id}.csv"
         with csv_path.open("w", newline="", encoding="utf-8") as f:
@@ -383,7 +408,7 @@ async def main_async(args: argparse.Namespace) -> None:
                     "gpu_mem_used_mb_p50": pctl(gpu_mems, 0.50), "gpu_mem_used_mb_p95": pctl(gpu_mems, 0.95),
                     "success_rate": r["success_rate"], "http_error_rate": r["http_error_rate"], "timeout_rate": r["timeout_rate"],
                     "other_error_rate": r["other_error_rate"],
-                    "est_dollars_per_million_output_tokens": est_per_million,
+                    "est_dollars_per_million_output_tokens": row_cost_per_million(r, args.gpu_hour_usd, args.gpu_count),
                 })
 
         manifest = {
@@ -399,8 +424,10 @@ async def main_async(args: argparse.Namespace) -> None:
             "inference_mode": inference_mode,
             "gpu_metrics_valid": gpu_metrics_valid,
             "determinism": det,
+            "aggregate_est_dollars_per_million_output_tokens": aggregate_est_per_million,
             "rows": len(rows),
             "launch_vllm": args.launch_vllm,
+            "warmup_requests_per_scenario": args.warmup_requests,
             "gpu_sampler": {
                 "enabled": args.enable_gpu_sampling,
                 "interval_s": args.gpu_sample_interval_s,
@@ -448,6 +475,13 @@ def main() -> None:
         choices=["auto", "stub_token_generation", "real_model_inference", "unknown"],
         help="Declare whether the endpoint is real model inference or a stub-token runtime.",
     )
+    p.add_argument(
+        "--determinism-check",
+        default="strict",
+        choices=["strict", "warn", "skip"],
+        help="Use strict to fail on mismatch, warn to record mismatch only, or skip to avoid the check for nondeterministic backends.",
+    )
+    p.add_argument("--warmup-requests", type=int, default=1, help="Streaming warmup requests per scenario/concurrency before timed measurement.")
 
     p.add_argument("--launch-vllm", action="store_true")
     p.add_argument("--vllm-host", default="127.0.0.1")

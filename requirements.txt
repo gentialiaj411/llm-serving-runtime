@@ -1,0 +1,2 @@
+-r bench/harness/requirements.txt
+matplotlib==3.10.7

@@ -2,3 +2,14 @@
 __pycache__/
 *.pyc
 build/
+
+# Intermediate/scratch benchmark artifacts (keep only final named runs)
+bench/results/codex-dry-*.csv
+bench/results/codex-dry-*.manifest.json
+bench/results/codex-runtime-final-*.csv
+bench/results/codex-runtime-final-*.manifest.json
+bench/results/codex-runtime-smoke-*.csv
+bench/results/codex-runtime-smoke-*.manifest.json
+bench/results/codex-phase2-smoke-*.csv
+bench/results/codex-phase2-smoke-*.manifest.json
+bench/results/codex-chaos-smoke-*.json

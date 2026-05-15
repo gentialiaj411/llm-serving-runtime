@@ -35,6 +35,7 @@ async def spam_requests(base_url: str, model: str, concurrency: int, duration_s:
     stop_at = time.time() + duration_s
     ok = 0
     fail = 0
+    counts_lock = asyncio.Lock()
 
     async with httpx.AsyncClient(timeout=20.0) as client:
         async def worker_loop() -> None:
@@ -48,12 +49,14 @@ async def spam_requests(base_url: str, model: str, concurrency: int, duration_s:
                 }
                 try:
                     r = await client.post(base_url, json=body)
-                    if r.status_code == 200:
-                        ok += 1
-                    else:
-                        fail += 1
+                    async with counts_lock:
+                        if r.status_code == 200:
+                            ok += 1
+                        else:
+                            fail += 1
                 except Exception:
-                    fail += 1
+                    async with counts_lock:
+                        fail += 1
                 await asyncio.sleep(0.01)
 
         await asyncio.gather(*[asyncio.create_task(worker_loop()) for _ in range(concurrency)])
@@ -95,6 +98,8 @@ async def main_async(args: argparse.Namespace) -> None:
     async def injector() -> None:
         end = time.time() + args.duration_s
         while time.time() < end:
+            if args.max_kills is not None and len(injection_events) >= args.max_kills:
+                return
             await asyncio.sleep(args.kill_interval_s)
             victim = kill_random_worker(worker_pids)
             if victim is not None:
@@ -116,9 +121,13 @@ async def main_async(args: argparse.Namespace) -> None:
         "concurrency": args.concurrency,
         "result": result,
         "injections": injection_events,
+        "injection_count": len(injection_events),
         "sla_target_success_rate": args.sla_target,
         "sla_pass": result["success_rate"] >= args.sla_target,
     }
+    if args.require_injection and not injection_events:
+        out["sla_pass"] = False
+        out["failure_reason"] = "required fault injection did not occur"
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -135,6 +144,8 @@ def main() -> None:
     p.add_argument("--duration-s", type=int, default=60)
     p.add_argument("--concurrency", type=int, default=16)
     p.add_argument("--kill-interval-s", type=float, default=8.0)
+    p.add_argument("--max-kills", type=int, default=None)
+    p.add_argument("--require-injection", action="store_true")
     p.add_argument("--sla-target", type=float, default=0.95)
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--output", default="bench/results/chaos-result.json")
