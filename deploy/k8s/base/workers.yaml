@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: llm-worker
+spec:
+  serviceName: llm-worker
+  replicas: 4
+  selector:
+    matchLabels:
+      app: llm-worker
+  template:
+    metadata:
+      labels:
+        app: llm-worker
+    spec:
+      containers:
+      - name: worker
+        image: ghcr.io/gentialiaj411/llm-serving-runtime:latest
+        command: ["python", "-m", "uvicorn", "runtime.phase2.worker_server:app", "--host", "0.0.0.0", "--port", "8102"]
+        env:
+        - name: KV_TOTAL_BLOCKS
+          value: "32768"
+        - name: KV_BLOCK_SIZE_TOKENS
+          value: "16"
+        ports:
+        - containerPort: 8102
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-worker
+spec:
+  clusterIP: None
+  selector:
+    app: llm-worker
+  ports:
+  - port: 8102
+    targetPort: 8102

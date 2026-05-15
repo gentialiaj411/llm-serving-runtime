@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-coordinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-coordinator
+  template:
+    metadata:
+      labels:
+        app: llm-coordinator
+    spec:
+      containers:
+      - name: coordinator
+        image: ghcr.io/gentialiaj411/llm-serving-runtime:latest
+        command: ["python", "-m", "uvicorn", "runtime.phase2.coordinator_server:app", "--host", "0.0.0.0", "--port", "8000"]
+        env:
+        - name: WORKER_URLS
+          value: "http://llm-worker-0:8102,http://llm-worker-1:8102,http://llm-worker-2:8102,http://llm-worker-3:8102"
+        ports:
+        - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-coordinator
+spec:
+  selector:
+    app: llm-coordinator
+  ports:
+  - port: 8000
+    targetPort: 8000

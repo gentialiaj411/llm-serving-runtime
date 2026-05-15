@@ -13,10 +13,17 @@
   - request admission while active decode is running
   - one-token-per-request decode steps per scheduler tick
   - cancellation and deadline checks on each decode iteration
+- Paged KV block allocator wired into worker admission/release:
+  - fixed-size block allocation per request
+  - free-list based block reuse on completion/cancel/timeout
+  - allocator stats: used/free blocks, occupancy, active allocations, fragmentation ratio
+  - metrics endpoints: worker `/metrics`, coordinator `/admin/kv-metrics`
 
 ## Verified artifacts
 - `bench/results/phase2-smoke-scheduler.csv`
 - `bench/results/phase2-smoke-scheduler.manifest.json`
+- `bench/results/phase2-kv-paged.csv`
+- `bench/results/phase2-kv-paged.manifest.json`
 
 ## Remaining to fully lock architecture
 - Port the above control/data-plane behaviors from Python runtime to C++ coordinator/worker.

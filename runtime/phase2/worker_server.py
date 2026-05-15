@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
+from runtime.phase2.kv_allocator import PagedKVAllocator
 
 app = FastAPI(title="phase2-worker")
 
@@ -39,6 +41,7 @@ _queue: asyncio.Queue[Pending] = asyncio.Queue()
 _cancelled: set[str] = set()
 _active: dict[str, ActiveState] = {}
 _waiting: collections.deque[Pending] = collections.deque()
+_allocator: PagedKVAllocator | None = None
 
 
 async def _continuous_batch_loop() -> None:
@@ -60,6 +63,16 @@ async def _continuous_batch_loop() -> None:
         # Admit waiting requests into active decode set.
         while _waiting and len(_active) < max_active:
             pending = _waiting.popleft()
+            assert _allocator is not None
+            alloc = _allocator.allocate_for_tokens(
+                pending.req.request_id,
+                pending.req.max_tokens,
+            )
+            if alloc is None:
+                # No KV capacity right now; request waits for next scheduling cycle.
+                _waiting.appendleft(pending)
+                break
+
             words = pending.req.prompt.split() or ["hello"]
             _active[pending.req.request_id] = ActiveState(
                 req=pending.req,
@@ -103,11 +116,17 @@ async def _continuous_batch_loop() -> None:
 
         for rid in finished_ids:
             _active.pop(rid, None)
+            if _allocator is not None:
+                _allocator.free_request(rid)
             _cancelled.discard(rid)
 
 
 @app.on_event("startup")
 async def startup() -> None:
+    global _allocator
+    total_blocks = int(os.getenv("KV_TOTAL_BLOCKS", "4096"))
+    block_size_tokens = int(os.getenv("KV_BLOCK_SIZE_TOKENS", "16"))
+    _allocator = PagedKVAllocator(total_blocks=total_blocks, block_size_tokens=block_size_tokens)
     asyncio.create_task(_continuous_batch_loop())
 
 
@@ -131,8 +150,11 @@ async def cancel(request_id: str) -> dict[str, str]:
 
 
 @app.get("/metrics")
-async def metrics() -> dict[str, int]:
-    return {
+async def metrics() -> dict[str, Any]:
+    base: dict[str, Any] = {
         "queue_waiting": len(_waiting),
         "active_decode": len(_active),
     }
+    if _allocator is not None:
+        base.update(_allocator.stats())
+    return base

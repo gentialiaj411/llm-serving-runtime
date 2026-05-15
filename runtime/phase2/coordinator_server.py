@@ -222,3 +222,21 @@ async def recovery_state() -> dict[str, Any]:
         "pending_request_ids": sorted(_pending_recovery),
         "log_path": REQUEST_LOG,
     }
+
+
+@app.get("/admin/kv-metrics")
+async def kv_metrics() -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        for w in _workers:
+            entry: dict[str, Any] = {"worker_url": w.url, "healthy": w.healthy}
+            try:
+                r = await client.get(f"{w.url}/metrics")
+                if r.status_code == 200:
+                    entry["metrics"] = r.json()
+                else:
+                    entry["error"] = f"status_{r.status_code}"
+            except Exception as e:
+                entry["error"] = str(e)
+            results.append(entry)
+    return {"workers": results}
