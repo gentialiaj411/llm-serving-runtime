@@ -19,14 +19,18 @@ class PagedKVAllocator:
     - Per-request block ownership tracking
     """
 
-    def __init__(self, total_blocks: int, block_size_tokens: int) -> None:
+    def __init__(self, total_blocks: int, block_size_tokens: int, bytes_per_token: int = 1) -> None:
         if total_blocks <= 0:
             raise ValueError("total_blocks must be > 0")
         if block_size_tokens <= 0:
             raise ValueError("block_size_tokens must be > 0")
+        if bytes_per_token <= 0:
+            raise ValueError("bytes_per_token must be > 0")
 
         self.total_blocks = total_blocks
         self.block_size_tokens = block_size_tokens
+        self.bytes_per_token = bytes_per_token
+        self.block_size_bytes = block_size_tokens * bytes_per_token
         self._free: list[int] = list(range(total_blocks))
         self._owned: dict[str, Allocation] = {}
 
@@ -72,6 +76,10 @@ class PagedKVAllocator:
             "used_blocks": used_blocks,
             "used_pct": used_pct,
             "block_size_tokens": self.block_size_tokens,
+            "bytes_per_token": self.bytes_per_token,
+            "block_size_bytes": self.block_size_bytes,
+            "total_kv_bytes": self.total_blocks * self.block_size_bytes,
+            "free_kv_bytes": free_blocks * self.block_size_bytes,
             "active_allocations": len(self._owned),
             "fragmentation_ratio": frag_ratio,
         }

@@ -56,13 +56,18 @@ if(BUILD_CPP_RUNTIME)
       if(ENABLE_CUDA_WORKER)
         add_executable(runtime_worker_cpp
           runtime/cpp/worker/main.cpp
+          runtime/cpp/worker/grpc_worker_service.cpp
           runtime/cpp/worker/cuda_stub.cu
         )
         target_compile_definitions(runtime_worker_cpp PRIVATE RUNTIME_ENABLE_CUDA_STUB=1)
       else()
-        add_executable(runtime_worker_cpp runtime/cpp/worker/main.cpp)
+        add_executable(runtime_worker_cpp
+          runtime/cpp/worker/main.cpp
+          runtime/cpp/worker/grpc_worker_service.cpp
+        )
         target_compile_definitions(runtime_worker_cpp PRIVATE RUNTIME_ENABLE_CUDA_STUB=0)
       endif()
+      target_compile_definitions(runtime_worker_cpp PRIVATE RUNTIME_ENABLE_GRPC_PROTO=1)
       target_link_libraries(runtime_worker_cpp PRIVATE runtime_common runtime_proto)
 
     else()
@@ -80,6 +85,7 @@ if(BUILD_CPP_RUNTIME)
         add_executable(runtime_worker_cpp runtime/cpp/worker/main.cpp)
         target_compile_definitions(runtime_worker_cpp PRIVATE RUNTIME_ENABLE_CUDA_STUB=0)
       endif()
+      target_compile_definitions(runtime_worker_cpp PRIVATE RUNTIME_ENABLE_GRPC_PROTO=0)
       target_link_libraries(runtime_worker_cpp PRIVATE runtime_common)
     endif()
   endif()

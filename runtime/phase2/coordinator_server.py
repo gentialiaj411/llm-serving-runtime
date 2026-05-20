@@ -50,6 +50,14 @@ _completed_cache: collections.OrderedDict[str, tuple[float, dict[str, Any]]] = c
 _cancelled: collections.OrderedDict[str, float] = collections.OrderedDict()
 _pending_recovery: set[str] = set()
 _health_task: asyncio.Task | None = None
+_ttft_ms_samples: collections.deque[float] = collections.deque(maxlen=1000)
+_metrics: dict[str, int] = {
+    "requests_total": 0,
+    "stream_requests_total": 0,
+    "nonstream_requests_total": 0,
+    "retry_attempts_total": 0,
+    "cancellations_total": 0,
+}
 
 
 @asynccontextmanager
@@ -75,6 +83,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="phase2-coordinator", lifespan=lifespan)
+
+
+def _pctl(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    xs = sorted(values)
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * min(1.0, max(0.0, q))
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    w = pos - lo
+    return float(xs[lo] * (1.0 - w) + xs[hi] * w)
 
 
 def _prune_ordered_cache(cache: collections.OrderedDict, max_items: int, now: float | None = None) -> None:
@@ -224,6 +245,8 @@ async def _worker_stream(
     deadline_ms: int | None,
 ) -> Any:
     generated: list[str] = []
+    first_token_ttft_ms: float | None = None
+    stream_start = time.perf_counter()
     prompt_tokens = max(1, len(prompt.split()))
     try:
         timeout_s = 30.0
@@ -252,6 +275,9 @@ async def _worker_stream(
                     if kind == "token":
                         token = str(event.get("token", ""))
                         generated.append(token)
+                        if first_token_ttft_ms is None:
+                            first_token_ttft_ms = (time.perf_counter() - stream_start) * 1000.0
+                            _ttft_ms_samples.append(first_token_ttft_ms)
                         content = token if len(generated) == 1 else f" {token}"
                         yield _stream_chunk(req.model, content)
                     elif kind == "done":
@@ -313,6 +339,7 @@ async def _worker_stream_with_retries(req: ChatRequest, prompt: str, request_id:
         except httpx.RequestError as exc:
             worker.healthy = False
             skipped_workers.add(worker.url)
+            _metrics["retry_attempts_total"] += 1
             _append_log(
                 {
                     "ts_unix_ms": int(time.time() * 1000),
@@ -339,6 +366,7 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any] | StreamingRespon
 
     prompt = "\n".join(m.content for m in req.messages)
     request_id = req.request_id or f"req-{int(time.time()*1e6)}"
+    _metrics["requests_total"] += 1
 
     # Replay-safe: return cached terminal completion for duplicate request id.
     cached = _get_completion(request_id)
@@ -348,10 +376,12 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any] | StreamingRespon
         raise HTTPException(status_code=499, detail="Request previously cancelled")
 
     if req.stream:
+        _metrics["stream_requests_total"] += 1
         return StreamingResponse(
             _worker_stream_with_retries(req, prompt, request_id, deadline_ms),
             media_type="text/event-stream",
         )
+    _metrics["nonstream_requests_total"] += 1
 
     skipped_workers: set[str] = set()
     while True:
@@ -443,6 +473,7 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any] | StreamingRespon
 
 @app.post("/v1/requests/{request_id}/cancel")
 async def cancel_request(request_id: str) -> dict[str, str]:
+    _metrics["cancellations_total"] += 1
     _mark_cancelled(request_id)
     worker_url = _get_active_worker(request_id)
     if worker_url:
@@ -486,3 +517,20 @@ async def kv_metrics() -> dict[str, Any]:
                 entry["error"] = str(e)
             results.append(entry)
     return {"workers": results}
+
+
+@app.get("/metrics")
+async def metrics() -> dict[str, Any]:
+    ttft_values = list(_ttft_ms_samples)
+    return {
+        "requests_total": _metrics["requests_total"],
+        "stream_requests_total": _metrics["stream_requests_total"],
+        "nonstream_requests_total": _metrics["nonstream_requests_total"],
+        "retry_attempts_total": _metrics["retry_attempts_total"],
+        "cancellations_total": _metrics["cancellations_total"],
+        "current_inflight_requests": len(_active),
+        "workers_inflight_total": sum(w.inflight for w in _workers),
+        "ttft_ms_p50": _pctl(ttft_values, 0.50),
+        "ttft_ms_p95": _pctl(ttft_values, 0.95),
+        "ttft_sample_count": len(ttft_values),
+    }

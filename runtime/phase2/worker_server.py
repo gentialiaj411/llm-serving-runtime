@@ -41,6 +41,11 @@ class ActiveState:
     words: list[str]
     generated: list[str]
     cursor: int
+    input_ids: Any | None = None
+    attention_mask: Any | None = None
+    past_key_values: Any | None = None
+    last_token_id: int | None = None
+    prompt_prefilled: bool = False
 
 
 _queue: asyncio.Queue[Pending] = asyncio.Queue()
@@ -49,6 +54,66 @@ _active: dict[str, ActiveState] = {}
 _waiting: collections.deque[Pending] = collections.deque()
 _allocator: PagedKVAllocator | None = None
 _batch_task: asyncio.Task | None = None
+_backend: Any | None = None
+_backend_name = os.getenv("PHASE2_BACKEND", "synthetic").strip().lower()
+
+
+class TransformersBackend:
+    def __init__(self) -> None:
+        model_id = os.getenv("HF_MODEL_ID", "sshleifer/tiny-gpt2")
+        torch_dtype_name = os.getenv("HF_TORCH_DTYPE", "float32")
+        device = os.getenv("HF_DEVICE", "cpu")
+
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        dtype = getattr(torch, torch_dtype_name)
+        self.torch = torch
+        self.device = device
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+        self.model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype)
+        self.model.to(device)
+        self.model.eval()
+        self.bytes_per_elem = torch.empty((), dtype=dtype).element_size()
+        self.bytes_per_token = self._bytes_per_token()
+
+    def _bytes_per_token(self) -> int:
+        config = self.model.config
+        n_layer = int(getattr(config, "num_hidden_layers", getattr(config, "n_layer", 1)))
+        n_head = int(getattr(config, "num_attention_heads", getattr(config, "n_head", 1)))
+        hidden_size = int(getattr(config, "hidden_size", getattr(config, "n_embd", n_head)))
+        head_dim = hidden_size // max(1, n_head)
+        return max(1, n_layer * n_head * head_dim * 2 * self.bytes_per_elem)
+
+    def init_state(self, state: ActiveState) -> None:
+        encoded = self.tokenizer(state.req.prompt or "hello", return_tensors="pt")
+        state.input_ids = encoded["input_ids"].to(self.device)
+        attention_mask = encoded.get("attention_mask")
+        state.attention_mask = attention_mask.to(self.device) if attention_mask is not None else None
+
+    def next_token(self, state: ActiveState) -> str:
+        assert state.input_ids is not None
+        with self.torch.no_grad():
+            if not state.prompt_prefilled:
+                outputs = self.model(
+                    input_ids=state.input_ids,
+                    attention_mask=state.attention_mask,
+                    use_cache=True,
+                )
+                state.prompt_prefilled = True
+            else:
+                assert state.last_token_id is not None
+                input_ids = self.torch.tensor([[state.last_token_id]], device=self.device)
+                outputs = self.model(
+                    input_ids=input_ids,
+                    past_key_values=state.past_key_values,
+                    use_cache=True,
+                )
+
+        state.past_key_values = outputs.past_key_values
+        next_id = int(outputs.logits[:, -1, :].argmax(dim=-1).item())
+        state.last_token_id = next_id
+        return self.tokenizer.decode([next_id], skip_special_tokens=True)
 
 
 @asynccontextmanager
@@ -70,6 +135,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="phase2-worker", lifespan=lifespan)
+
+
+def _get_backend() -> Any | None:
+    global _allocator, _backend
+    if _backend_name == "synthetic":
+        return None
+    if _backend_name != "transformers":
+        raise RuntimeError("PHASE2_BACKEND must be one of: synthetic, transformers")
+    if _backend is None:
+        _backend = TransformersBackend()
+        total_blocks = int(os.getenv("KV_TOTAL_BLOCKS", "4096"))
+        block_size_tokens = int(os.getenv("KV_BLOCK_SIZE_TOKENS", "16"))
+        _allocator = PagedKVAllocator(
+            total_blocks=total_blocks,
+            block_size_tokens=block_size_tokens,
+            bytes_per_token=int(_backend.bytes_per_token),
+        )
+    return _backend
 
 
 def _prune_cancelled(now: float | None = None) -> None:
@@ -111,6 +194,7 @@ async def _continuous_batch_loop() -> None:
         # Admit waiting requests into active decode set.
         while _waiting and len(_active) < max_active:
             pending = _waiting.popleft()
+            backend = _get_backend()
             assert _allocator is not None
             alloc = _allocator.allocate_for_tokens(
                 pending.req.request_id,
@@ -122,7 +206,7 @@ async def _continuous_batch_loop() -> None:
                 break
 
             words = pending.req.prompt.split() or ["hello"]
-            _active[pending.req.request_id] = ActiveState(
+            state = ActiveState(
                 req=pending.req,
                 fut=pending.fut,
                 stream_queue=pending.stream_queue,
@@ -130,6 +214,9 @@ async def _continuous_batch_loop() -> None:
                 generated=[],
                 cursor=0,
             )
+            if backend is not None:
+                backend.init_state(state)
+            _active[pending.req.request_id] = state
 
         if not _active:
             await asyncio.sleep(0.001)
@@ -157,11 +244,16 @@ async def _continuous_batch_loop() -> None:
                 finished_ids.append(rid)
                 continue
 
-            token = state.words[state.cursor % len(state.words)]
+            backend = _get_backend()
+            token = (
+                backend.next_token(state)
+                if backend is not None
+                else state.words[state.cursor % len(state.words)]
+            )
             state.generated.append(token)
             state.cursor += 1
             if state.stream_queue is not None:
-                state.stream_queue.put_nowait({"type": "token", "token": token, "index": state.cursor - 1})
+                state.stream_queue.put_nowait({"type": "token", "token": token, "text": token, "index": state.cursor - 1})
 
             if len(state.generated) >= state.req.max_tokens:
                 text = " ".join(state.generated)

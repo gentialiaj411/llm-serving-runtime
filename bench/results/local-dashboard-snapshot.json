@@ -1,0 +1,25 @@
+{
+  "generated_at_utc": "2026-05-17T21:52:10Z",
+  "source_csv": "bench\\results\\runtime-final-local.csv",
+  "csv_summary": {
+    "rows": 6,
+    "ttft_ms_p95_max": 8117.71049999993,
+    "ttft_ms_p50_avg": 4065.729616666677,
+    "success_rate_min": 1.0,
+    "scenario_ids": [
+      "chat_multiturn",
+      "long_long",
+      "long_short",
+      "mixed_concurrency",
+      "short_long",
+      "short_short"
+    ]
+  },
+  "runtime_metrics": null,
+  "focus_metrics": {
+    "ttft_ms_p95_max": 8117.71049999993,
+    "current_inflight_requests": null,
+    "retry_attempts_total": null,
+    "cancellations_total": null
+  }
+}
