@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 import threading
@@ -10,6 +11,44 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
+
+
+class _JsonFormatter(logging.Formatter):
+    _SKIP = frozenset({
+        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+        "created", "msecs", "relativeCreated", "thread", "threadName",
+        "processName", "process", "message", "taskName",
+    })
+
+    def format(self, record: logging.LogRecord) -> str:
+        record.message = record.getMessage()
+        out: dict[str, Any] = {
+            "ts_unix_ms": int(record.created * 1000),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.message,
+        }
+        if record.exc_info:
+            out["exc"] = self.formatException(record.exc_info)
+        for k, v in record.__dict__.items():
+            if k not in self._SKIP:
+                out[k] = v
+        return json.dumps(out, default=str)
+
+
+def _configure_logging() -> None:
+    level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(_JsonFormatter())
+        root.addHandler(handler)
+    root.setLevel(level)
+
+
+_configure_logging()
+_log = logging.getLogger("phase1")
 
 app = FastAPI(title="phase1-openai-shim")
 _transformers_backend: dict[str, Any] = {}
@@ -216,6 +255,7 @@ async def healthz() -> dict[str, str]:
 async def chat_completions(req: ChatRequest) -> dict[str, Any] | Response:
     t0 = time.perf_counter()
     prompt = "\n".join([m.content for m in req.messages])
+    _log.info("chat completion request", extra={"model": req.model, "stream": req.stream, "max_tokens": req.max_tokens})
 
     if req.stream:
         return StreamingResponse(_stream_completion(req, prompt), media_type="text/event-stream")
@@ -232,6 +272,7 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any] | Response:
             "total_tokens": max(1, len(prompt.split())) + max(1, len(text.split())),
         }
     latency_ms = (time.perf_counter() - t0) * 1000.0
+    _log.info("chat completion done", extra={"model": req.model, "latency_ms": round(latency_ms, 2)})
 
     return {
         "id": "chatcmpl-phase1",
