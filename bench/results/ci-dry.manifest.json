@@ -1,14 +1,33 @@
 {
   "run_id": "ci-dry",
-  "timestamp_utc": "2026-05-15T04:45:53Z",
+  "timestamp_utc": "2026-05-21T17:43:34Z",
   "system_under_test": "ci-dry",
   "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
   "headline_vllm_version": "0.8.5",
+  "gpu_type": "unknown",
+  "gpu_count": 1,
+  "gpu_hour_usd": 2.5,
+  "base_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "inference_mode": "stub_token_generation",
+  "gpu_metrics_valid": false,
   "determinism": {
     "passed": true,
-    "hash_a": "bb0757490ca7b10677c96917896c90497c30e5dbb0a8270c274804f595455b57",
-    "hash_b": "bb0757490ca7b10677c96917896c90497c30e5dbb0a8270c274804f595455b57"
+    "hash_a": "b755cb248c3c4a7d94f835b4421809336e7015850342064be4dfa23349dcdcaa",
+    "hash_b": "b755cb248c3c4a7d94f835b4421809336e7015850342064be4dfa23349dcdcaa",
+    "mode": "strict"
   },
-  "rows": 6,
-  "base_url": "http://127.0.0.1:8000/v1/chat/completions"
+  "aggregate_est_dollars_per_million_output_tokens": 0.0,
+  "rows": 19,
+  "launch_vllm": false,
+  "warmup_requests_per_scenario": 1,
+  "gpu_sampler": {
+    "enabled": false,
+    "interval_s": 0.5,
+    "samples_collected": 0
+  },
+  "metric_notes": {
+    "ttft": "Measured from request send to first streamed assistant token chunk.",
+    "inter_token_latency": "Measured as gaps between streamed assistant token chunk arrivals.",
+    "gpu": "Valid only when gpu_metrics_valid is true; otherwise CSV GPU columns are zeros from missing samples."
+  }
 }
