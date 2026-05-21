@@ -4,6 +4,7 @@ import asyncio
 import collections
 from contextlib import asynccontextmanager
 import json
+import logging
 import os
 import time
 from typing import Any, AsyncIterator
@@ -12,6 +13,42 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
+class _JsonFormatter(logging.Formatter):
+    _SKIP = frozenset({
+        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+        "created", "msecs", "relativeCreated", "thread", "threadName",
+        "processName", "process", "message", "taskName",
+    })
+
+    def format(self, record: logging.LogRecord) -> str:
+        record.message = record.getMessage()
+        out: dict[str, Any] = {
+            "ts_unix_ms": int(record.created * 1000),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.message,
+        }
+        if record.exc_info:
+            out["exc"] = self.formatException(record.exc_info)
+        for k, v in record.__dict__.items():
+            if k not in self._SKIP:
+                out[k] = v
+        return json.dumps(out, default=str)
+
+
+def _configure_logging() -> None:
+    level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(_JsonFormatter())
+        root.addHandler(handler)
+    root.setLevel(level)
+
+
+_log = logging.getLogger("coordinator")
 
 LOG_DIR = "runtime/logs"
 REQUEST_LOG = f"{LOG_DIR}/requests.jsonl"
@@ -64,11 +101,13 @@ _metrics: dict[str, int] = {
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _health_task
     worker_urls = os.getenv("WORKER_URLS", "http://127.0.0.1:8102")
+    _configure_logging()
     _workers.clear()
     for raw in worker_urls.split(","):
         u = raw.strip()
         if u:
             _workers.append(WorkerState(url=u))
+    _log.info("coordinator starting", extra={"worker_count": len(_workers)})
     _load_recovery_state()
     _health_task = asyncio.create_task(_health_loop())
     try:
@@ -194,10 +233,17 @@ async def _health_loop() -> None:
             for w in _workers:
                 try:
                     r = await client.get(f"{w.url}/healthz")
+                    prev = w.healthy
                     w.healthy = r.status_code == 200
                     if w.healthy:
                         w.last_ok_unix_ms = int(time.time() * 1000)
+                    if prev and not w.healthy:
+                        _log.warning("worker became unhealthy", extra={"worker_url": w.url})
+                    elif not prev and w.healthy:
+                        _log.info("worker recovered", extra={"worker_url": w.url})
                 except Exception:
+                    if w.healthy:
+                        _log.warning("health check failed", extra={"worker_url": w.url}, exc_info=True)
                     w.healthy = False
         await asyncio.sleep(1.0)
 
@@ -306,8 +352,10 @@ async def _worker_stream(
                         _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "cancelled", "request_id": request_id})
                         break
     except httpx.TimeoutException:
+        _log.warning("worker stream timed out", extra={"request_id": request_id, "worker_url": worker.url})
         _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "timed_out", "request_id": request_id})
     except Exception:
+        _log.error("worker stream failed unexpectedly", extra={"request_id": request_id, "worker_url": worker.url}, exc_info=True)
         _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "failed", "request_id": request_id})
         raise
     finally:
@@ -340,6 +388,10 @@ async def _worker_stream_with_retries(req: ChatRequest, prompt: str, request_id:
             worker.healthy = False
             skipped_workers.add(worker.url)
             _metrics["retry_attempts_total"] += 1
+            _log.warning(
+                "worker stream transport failed",
+                extra={"request_id": request_id, "worker_url": worker.url, "emitted_tokens": emitted_tokens, "error": str(exc)},
+            )
             _append_log(
                 {
                     "ts_unix_ms": int(time.time() * 1000),
@@ -436,6 +488,7 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any] | StreamingRespon
                 _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "failed", "request_id": request_id})
                 raise HTTPException(status_code=503, detail="No reachable workers") from exc
         except Exception:
+            _log.error("non-stream request failed unexpectedly", extra={"request_id": request_id, "worker_url": worker.url}, exc_info=True)
             _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "failed", "request_id": request_id})
             raise
         finally:
@@ -481,7 +534,7 @@ async def cancel_request(request_id: str) -> dict[str, str]:
             try:
                 await client.post(f"{worker_url}/cancel/{request_id}")
             except Exception:
-                pass
+                _log.warning("failed to forward cancel to worker", extra={"request_id": request_id, "worker_url": worker_url}, exc_info=True)
     _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "cancelled", "request_id": request_id})
     return {"request_id": request_id, "status": "cancel_accepted"}
 
@@ -513,8 +566,9 @@ async def kv_metrics() -> dict[str, Any]:
                     entry["metrics"] = r.json()
                 else:
                     entry["error"] = f"status_{r.status_code}"
-            except Exception as e:
-                entry["error"] = str(e)
+            except Exception as exc:
+                _log.warning("failed to fetch worker metrics", extra={"worker_url": w.url}, exc_info=True)
+                entry["error"] = str(exc)
             results.append(entry)
     return {"workers": results}
 

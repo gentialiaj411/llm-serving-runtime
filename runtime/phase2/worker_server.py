@@ -4,18 +4,58 @@ import asyncio
 import collections
 from contextlib import asynccontextmanager
 import json
+import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from runtime.phase2.kv_allocator import PagedKVAllocator
 
+class _JsonFormatter(logging.Formatter):
+    _SKIP = frozenset({
+        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+        "created", "msecs", "relativeCreated", "thread", "threadName",
+        "processName", "process", "message", "taskName",
+    })
+
+    def format(self, record: logging.LogRecord) -> str:
+        record.message = record.getMessage()
+        out: dict[str, Any] = {
+            "ts_unix_ms": int(record.created * 1000),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.message,
+        }
+        if record.exc_info:
+            out["exc"] = self.formatException(record.exc_info)
+        for k, v in record.__dict__.items():
+            if k not in self._SKIP:
+                out[k] = v
+        return json.dumps(out, default=str)
+
+
+def _configure_logging() -> None:
+    level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(_JsonFormatter())
+        root.addHandler(handler)
+    root.setLevel(level)
+
+
+_log = logging.getLogger("worker")
+
 CANCELLED_TTL_S = float(os.getenv("WORKER_CANCELLED_TTL_S", "3600"))
 CANCELLED_CACHE_MAX = int(os.getenv("WORKER_CANCELLED_CACHE_MAX", "10000"))
+MAX_KV_RETRIES = int(os.getenv("WORKER_MAX_KV_RETRIES", "100"))
+ADMISSION_TIMEOUT_S = float(os.getenv("WORKER_ADMISSION_TIMEOUT_S", "30.0"))
+KV_BACKPRESSURE_PCT = float(os.getenv("WORKER_KV_BACKPRESSURE_PCT", "90.0"))
 
 
 class GenerateRequest(BaseModel):
@@ -31,6 +71,8 @@ class Pending:
     req: GenerateRequest
     fut: asyncio.Future
     stream_queue: asyncio.Queue | None = None
+    admitted_at: float = field(default_factory=time.time)
+    kv_retry_count: int = 0
 
 
 @dataclass
@@ -412,9 +454,11 @@ class TransformersBackend:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _allocator, _batch_task
+    _configure_logging()
     total_blocks = int(os.getenv("KV_TOTAL_BLOCKS", "4096"))
     block_size_tokens = int(os.getenv("KV_BLOCK_SIZE_TOKENS", "16"))
     _allocator = PagedKVAllocator(total_blocks=total_blocks, block_size_tokens=block_size_tokens)
+    _log.info("worker starting", extra={"total_blocks": total_blocks, "block_size_tokens": block_size_tokens})
     _batch_task = asyncio.create_task(_continuous_batch_loop())
     try:
         yield
@@ -487,6 +531,32 @@ async def _continuous_batch_loop() -> None:
         # Admit waiting requests into active decode set.
         while _waiting and len(_active) < max_active:
             pending = _waiting.popleft()
+
+            # Fail requests that have waited past the admission deadline.
+            wait_s = time.time() - pending.admitted_at
+            if wait_s > ADMISSION_TIMEOUT_S:
+                _log.warning(
+                    "request timed out in admission queue",
+                    extra={"request_id": pending.req.request_id, "wait_s": round(wait_s, 2)},
+                )
+                if not pending.fut.done():
+                    pending.fut.set_result({"request_id": pending.req.request_id, "text": "", "timed_out": True})
+                if pending.stream_queue is not None:
+                    pending.stream_queue.put_nowait({"type": "timed_out"})
+                continue
+
+            # Fail requests that have exhausted their KV retry budget.
+            if pending.kv_retry_count >= MAX_KV_RETRIES:
+                _log.error(
+                    "KV allocation retry limit exceeded; dropping request",
+                    extra={"request_id": pending.req.request_id, "retries": pending.kv_retry_count},
+                )
+                if not pending.fut.done():
+                    pending.fut.set_result({"request_id": pending.req.request_id, "text": "", "timed_out": True})
+                if pending.stream_queue is not None:
+                    pending.stream_queue.put_nowait({"type": "timed_out"})
+                continue
+
             backend = _get_backend()
             assert _allocator is not None
             alloc = _allocator.allocate_for_tokens(
@@ -495,9 +565,13 @@ async def _continuous_batch_loop() -> None:
             )
             if alloc is None:
                 # No KV capacity right now; request waits for next scheduling cycle.
+                pending.kv_retry_count += 1
+                if pending.kv_retry_count == 1:
+                    _log.warning("KV memory exhausted; request queued for retry", extra={"request_id": pending.req.request_id})
                 _waiting.appendleft(pending)
                 break
 
+            _log.info("request admitted to decode set", extra={"request_id": pending.req.request_id})
             words = pending.req.prompt.split() or ["hello"]
             state = ActiveState(
                 req=pending.req,
@@ -593,8 +667,22 @@ async def _continuous_batch_loop() -> None:
         for rid in finished_ids:
             _active.pop(rid, None)
             if _allocator is not None:
-                _allocator.free_request(rid)
+                try:
+                    _allocator.free_request(rid)
+                except Exception:
+                    _log.error("failed to free KV allocation", extra={"request_id": rid}, exc_info=True)
             _cancelled.pop(rid, None)
+
+
+def _check_backpressure() -> None:
+    if _allocator is not None:
+        stats = _allocator.stats()
+        if stats["used_pct"] >= KV_BACKPRESSURE_PCT:
+            _log.warning("KV backpressure triggered; rejecting new request", extra={"used_pct": stats["used_pct"]})
+            raise HTTPException(
+                status_code=503,
+                detail=f"KV memory at {stats['used_pct']:.1f}% capacity; try again later",
+            )
 
 
 @app.get("/healthz")
@@ -604,6 +692,7 @@ async def healthz() -> dict[str, str]:
 
 @app.post("/generate")
 async def generate(req: GenerateRequest) -> dict[str, Any]:
+    _check_backpressure()
     loop = asyncio.get_running_loop()
     fut: asyncio.Future = loop.create_future()
     await _queue.put(Pending(req=req, fut=fut))
@@ -612,6 +701,7 @@ async def generate(req: GenerateRequest) -> dict[str, Any]:
 
 @app.post("/generate_stream")
 async def generate_stream(req: GenerateRequest) -> StreamingResponse:
+    _check_backpressure()
     loop = asyncio.get_running_loop()
     fut: asyncio.Future = loop.create_future()
     stream_queue: asyncio.Queue = asyncio.Queue()
