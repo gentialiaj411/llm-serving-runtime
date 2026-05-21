@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 import unittest
 
 from runtime.phase2.kv_allocator import PagedKVAllocator
@@ -65,6 +70,36 @@ class PagedKVAllocatorTests(unittest.TestCase):
         self.assertIs(first, second)
         self.assertEqual(first.requested_tokens, 6)
         self.assertEqual(alloc.stats()["active_allocations"], 1)
+
+    def test_kv_pressure_script_emits_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "kv-pressure.json"
+            try:
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "bench/scripts/kv_pressure.py",
+                        "--requests",
+                        "8",
+                        "--seed",
+                        "7",
+                        "--output",
+                        str(output),
+                    ],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except OSError as exc:
+                self.skipTest(f"kv_pressure.py output path is unwritable: {exc}")
+
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertIn("peak_paged_bytes", payload)
+            self.assertIn("peak_contiguous_baseline_bytes", payload)
+            self.assertIn("reduction_percent", payload)
+            self.assertEqual(payload["seed"], 7)
+            self.assertGreater(payload["peak_paged_bytes"], 0)
+            self.assertGreater(payload["peak_contiguous_baseline_bytes"], 0)
 
 
 if __name__ == "__main__":
