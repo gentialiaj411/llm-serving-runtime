@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import collections
 from contextlib import asynccontextmanager
+import hashlib
 import json
 import logging
 import os
 import time
-from typing import Any, AsyncIterator
+from typing import Any, AsyncGenerator, AsyncIterator, TypedDict
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -50,13 +51,67 @@ def _configure_logging() -> None:
 
 _log = logging.getLogger("coordinator")
 
+
+def _env_int(name: str, default: int, *, min_val: int | None = None, max_val: int | None = None) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        val = int(raw)
+    except ValueError:
+        raise ValueError(f"Env var {name}={raw!r}: expected integer") from None
+    if min_val is not None and val < min_val:
+        raise ValueError(f"Env var {name}={val}: must be >= {min_val}")
+    if max_val is not None and val > max_val:
+        raise ValueError(f"Env var {name}={val}: must be <= {max_val}")
+    return val
+
+
+def _env_float(name: str, default: float, *, min_val: float | None = None, max_val: float | None = None) -> float:
+    raw = os.getenv(name, str(default))
+    try:
+        val = float(raw)
+    except ValueError:
+        raise ValueError(f"Env var {name}={raw!r}: expected float") from None
+    if min_val is not None and val < min_val:
+        raise ValueError(f"Env var {name}={val}: must be >= {min_val}")
+    if max_val is not None and val > max_val:
+        raise ValueError(f"Env var {name}={val}: must be <= {max_val}")
+    return val
+
+
+class _UsageDict(TypedDict):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+class _MessageDict(TypedDict):
+    role: str
+    content: str
+
+
+class _ChoiceDict(TypedDict):
+    index: int
+    message: _MessageDict
+    finish_reason: str
+
+
+class CompletionResponse(TypedDict):
+    id: str
+    object: str
+    created: int
+    model: str
+    choices: list[_ChoiceDict]
+    usage: _UsageDict
+
+
 LOG_DIR = "runtime/logs"
 REQUEST_LOG = f"{LOG_DIR}/requests.jsonl"
-REQUEST_LOG_MAX_BYTES = int(os.getenv("COORDINATOR_REQUEST_LOG_MAX_BYTES", str(16 * 1024 * 1024)))
-CACHE_TTL_S = float(os.getenv("COORDINATOR_CACHE_TTL_S", "3600"))
-ACTIVE_CACHE_MAX = int(os.getenv("COORDINATOR_ACTIVE_CACHE_MAX", "10000"))
-COMPLETED_CACHE_MAX = int(os.getenv("COORDINATOR_COMPLETED_CACHE_MAX", "10000"))
-CANCELLED_CACHE_MAX = int(os.getenv("COORDINATOR_CANCELLED_CACHE_MAX", "10000"))
+REQUEST_LOG_MAX_BYTES = _env_int("COORDINATOR_REQUEST_LOG_MAX_BYTES", 16 * 1024 * 1024, min_val=0)
+CACHE_TTL_S = _env_float("COORDINATOR_CACHE_TTL_S", 3600.0, min_val=1.0)
+ACTIVE_CACHE_MAX = _env_int("COORDINATOR_ACTIVE_CACHE_MAX", 10000, min_val=1)
+COMPLETED_CACHE_MAX = _env_int("COORDINATOR_COMPLETED_CACHE_MAX", 10000, min_val=1)
+CANCELLED_CACHE_MAX = _env_int("COORDINATOR_CANCELLED_CACHE_MAX", 10000, min_val=1)
+MAX_PROMPT_CHARS = _env_int("COORDINATOR_MAX_PROMPT_CHARS", 100_000, min_val=1)
 
 
 class Message(BaseModel):
@@ -83,8 +138,9 @@ class WorkerState(BaseModel):
 
 _workers: list[WorkerState] = []
 _active: collections.OrderedDict[str, tuple[float, str]] = collections.OrderedDict()
-_completed_cache: collections.OrderedDict[str, tuple[float, dict[str, Any]]] = collections.OrderedDict()
+_completed_cache: collections.OrderedDict[str, tuple[float, CompletionResponse]] = collections.OrderedDict()
 _cancelled: collections.OrderedDict[str, float] = collections.OrderedDict()
+_request_fingerprints: collections.OrderedDict[str, str] = collections.OrderedDict()
 _pending_recovery: set[str] = set()
 _health_task: asyncio.Task | None = None
 _ttft_ms_samples: collections.deque[float] = collections.deque(maxlen=1000)
@@ -140,7 +196,11 @@ def _pctl(values: list[float], q: float) -> float:
     return float(xs[lo] * (1.0 - w) + xs[hi] * w)
 
 
-def _prune_ordered_cache(cache: collections.OrderedDict, max_items: int, now: float | None = None) -> None:
+def _prune_ordered_cache(
+    cache: collections.OrderedDict[str, tuple[float, Any] | float],
+    max_items: int,
+    now: float | None = None,
+) -> None:
     now = now or time.time()
     expired = [key for key, value in cache.items() if now - (value[0] if isinstance(value, tuple) else value) > CACHE_TTL_S]
     for key in expired:
@@ -149,19 +209,34 @@ def _prune_ordered_cache(cache: collections.OrderedDict, max_items: int, now: fl
         cache.popitem(last=False)
 
 
-def _cache_completion(request_id: str, response: dict[str, Any]) -> None:
+def _cache_completion(request_id: str, response: CompletionResponse) -> None:
     _completed_cache[request_id] = (time.time(), response)
     _completed_cache.move_to_end(request_id)
     _prune_ordered_cache(_completed_cache, COMPLETED_CACHE_MAX)
 
 
-def _get_completion(request_id: str) -> dict[str, Any] | None:
+def _get_completion(request_id: str) -> CompletionResponse | None:
     _prune_ordered_cache(_completed_cache, COMPLETED_CACHE_MAX)
     cached = _completed_cache.get(request_id)
     if cached is None:
         return None
     _completed_cache.move_to_end(request_id)
     return cached[1]
+
+
+def _record_fingerprint(request_id: str, prompt: str) -> None:
+    fp = hashlib.sha256(prompt.encode()).hexdigest()[:16]
+    _request_fingerprints[request_id] = fp
+    _request_fingerprints.move_to_end(request_id)
+    while len(_request_fingerprints) > COMPLETED_CACHE_MAX:
+        _request_fingerprints.popitem(last=False)
+
+
+def _fingerprint_matches(request_id: str, prompt: str) -> bool:
+    existing = _request_fingerprints.get(request_id)
+    if existing is None:
+        return True
+    return existing == hashlib.sha256(prompt.encode()).hexdigest()[:16]
 
 
 def _mark_cancelled(request_id: str) -> None:
@@ -292,7 +367,7 @@ async def _worker_stream(
     request_id: str,
     worker: WorkerState,
     deadline_ms: int | None,
-) -> Any:
+) -> AsyncGenerator[str, None]:
     generated: list[str] = []
     first_token_ttft_ms: float | None = None
     stream_start = time.perf_counter()
@@ -344,6 +419,7 @@ async def _worker_stream(
                             },
                         }
                         _cache_completion(request_id, result)
+                        _record_fingerprint(request_id, prompt)
                         _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "completed", "request_id": request_id, "response": result})
                         yield _stream_done(req.model, prompt_tokens, max(1, len(generated)))
                         yield "data: [DONE]\n\n"
@@ -366,7 +442,7 @@ async def _worker_stream(
         worker.inflight = max(0, worker.inflight - 1)
 
 
-async def _worker_stream_with_retries(req: ChatRequest, prompt: str, request_id: str, deadline_ms: int | None) -> Any:
+async def _worker_stream_with_retries(req: ChatRequest, prompt: str, request_id: str, deadline_ms: int | None) -> AsyncGenerator[str, None]:
     skipped_workers: set[str] = set()
     emitted_tokens = False
     while True:
@@ -413,13 +489,19 @@ async def _worker_stream_with_retries(req: ChatRequest, prompt: str, request_id:
 
 
 @app.post("/v1/chat/completions", response_model=None)
-async def chat_completions(req: ChatRequest) -> dict[str, Any] | StreamingResponse:
+async def chat_completions(req: ChatRequest) -> CompletionResponse | StreamingResponse:
     now_ms = int(time.time() * 1000)
     deadline_ms = req.deadline_ms
     if deadline_ms is not None and deadline_ms <= now_ms:
         raise HTTPException(status_code=408, detail="Deadline already expired")
 
     prompt = "\n".join(m.content for m in req.messages)
+    if len(prompt) > MAX_PROMPT_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Prompt too long: {len(prompt)} chars exceeds limit of {MAX_PROMPT_CHARS}",
+        )
+
     request_id = req.request_id or f"req-{int(time.time()*1e6)}"
     _metrics["requests_total"] += 1
 
@@ -428,6 +510,8 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any] | StreamingRespon
     async with _admission_lock:
         cached = _get_completion(request_id)
         if cached is not None:
+            if not _fingerprint_matches(request_id, prompt):
+                _log.warning("request_id reused with different prompt content", extra={"request_id": request_id})
             return cached
         if _is_cancelled(request_id):
             raise HTTPException(status_code=499, detail="Request previously cancelled")
@@ -529,6 +613,7 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any] | StreamingRespon
         },
     }
     _cache_completion(request_id, result)
+    _record_fingerprint(request_id, prompt)
     _append_log({"ts_unix_ms": int(time.time() * 1000), "event": "completed", "request_id": request_id, "response": result})
     return result
 

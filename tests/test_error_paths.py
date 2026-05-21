@@ -89,6 +89,15 @@ _COORD_METRICS_ZERO = {
 }
 
 
+def _reset_coord_state() -> None:
+    coord._workers.clear()
+    coord._active.clear()
+    coord._completed_cache.clear()
+    coord._cancelled.clear()
+    coord._request_fingerprints.clear()
+    coord._metrics.update(_COORD_METRICS_ZERO)
+
+
 # ---------------------------------------------------------------------------
 # Fix 3a: KV allocation exhaustion – worker-side
 # ---------------------------------------------------------------------------
@@ -282,17 +291,10 @@ class TestWorkerKVAdmission(unittest.TestCase):
 class TestCoordinatorDeadlines(unittest.TestCase):
 
     def setUp(self) -> None:
-        coord._workers.clear()
-        coord._active.clear()
-        coord._completed_cache.clear()
-        coord._cancelled.clear()
+        _reset_coord_state()
 
     def tearDown(self) -> None:
-        coord._workers.clear()
-        coord._active.clear()
-        coord._completed_cache.clear()
-        coord._cancelled.clear()
-        coord._metrics.update(_COORD_METRICS_ZERO)
+        _reset_coord_state()
 
     def test_already_expired_deadline_rejected_at_intake(self) -> None:
         """deadline_ms in the past raises HTTP 408 without touching any worker."""
@@ -346,17 +348,10 @@ class TestCoordinatorDeadlines(unittest.TestCase):
 class TestAllWorkersExhausted(unittest.TestCase):
 
     def setUp(self) -> None:
-        coord._workers.clear()
-        coord._active.clear()
-        coord._completed_cache.clear()
-        coord._cancelled.clear()
+        _reset_coord_state()
 
     def tearDown(self) -> None:
-        coord._workers.clear()
-        coord._active.clear()
-        coord._completed_cache.clear()
-        coord._cancelled.clear()
-        coord._metrics.update(_COORD_METRICS_ZERO)
+        _reset_coord_state()
 
     def test_no_healthy_workers_raises_503(self) -> None:
         """No healthy workers in the pool → HTTP 503 immediately."""
@@ -461,17 +456,10 @@ class TestMalformedPayloads(unittest.TestCase):
 class TestConcurrentCancellation(unittest.TestCase):
 
     def setUp(self) -> None:
-        coord._workers.clear()
-        coord._active.clear()
-        coord._completed_cache.clear()
-        coord._cancelled.clear()
+        _reset_coord_state()
 
     def tearDown(self) -> None:
-        coord._workers.clear()
-        coord._active.clear()
-        coord._completed_cache.clear()
-        coord._cancelled.clear()
-        coord._metrics.update(_COORD_METRICS_ZERO)
+        _reset_coord_state()
 
     def test_cancel_of_active_request_forwards_to_correct_worker(self) -> None:
         """Cancelling an in-flight request sends the cancel to its worker."""
@@ -555,17 +543,10 @@ class TestConcurrentCancellation(unittest.TestCase):
 class TestStreamWorkerFailure(unittest.TestCase):
 
     def setUp(self) -> None:
-        coord._workers.clear()
-        coord._active.clear()
-        coord._completed_cache.clear()
-        coord._cancelled.clear()
+        _reset_coord_state()
 
     def tearDown(self) -> None:
-        coord._workers.clear()
-        coord._active.clear()
-        coord._completed_cache.clear()
-        coord._cancelled.clear()
-        coord._metrics.update(_COORD_METRICS_ZERO)
+        _reset_coord_state()
 
     def _make_stream_req(self, request_id: str = "req-stream") -> coord.ChatRequest:
         return coord.ChatRequest(
@@ -666,17 +647,10 @@ class TestAdmissionLockCorrectness(unittest.TestCase):
     """Verify that _admission_lock prevents double-dispatch for concurrent requests."""
 
     def setUp(self) -> None:
-        coord._workers.clear()
-        coord._active.clear()
-        coord._completed_cache.clear()
-        coord._cancelled.clear()
+        _reset_coord_state()
 
     def tearDown(self) -> None:
-        coord._workers.clear()
-        coord._active.clear()
-        coord._completed_cache.clear()
-        coord._cancelled.clear()
-        coord._metrics.update(_COORD_METRICS_ZERO)
+        _reset_coord_state()
 
     def test_concurrent_identical_cached_requests_never_dispatch(self) -> None:
         """Two concurrent requests sharing a cached request_id both get the cached result."""
@@ -751,6 +725,190 @@ class TestAdmissionLockCorrectness(unittest.TestCase):
                     asyncio.run(coord.chat_completions(_make_chat_req(request_id="req-fail-inflight")))
 
         self.assertEqual(coord._workers[0].inflight, 0)
+
+
+# ---------------------------------------------------------------------------
+# Fix 5 / Fix 6: env var validation, prompt length, request_id fingerprinting
+# ---------------------------------------------------------------------------
+
+class TestEnvVarValidation(unittest.TestCase):
+    """_env_int and _env_float reject bad values at startup."""
+
+    def test_env_int_rejects_non_integer(self) -> None:
+        import os
+        os.environ["_TEST_BAD_INT"] = "not_a_number"
+        try:
+            with self.assertRaises(ValueError):
+                coord._env_int("_TEST_BAD_INT", 1)
+        finally:
+            del os.environ["_TEST_BAD_INT"]
+
+    def test_env_int_rejects_below_min(self) -> None:
+        import os
+        os.environ["_TEST_MIN_INT"] = "0"
+        try:
+            with self.assertRaises(ValueError):
+                coord._env_int("_TEST_MIN_INT", 1, min_val=1)
+        finally:
+            del os.environ["_TEST_MIN_INT"]
+
+    def test_env_int_rejects_above_max(self) -> None:
+        import os
+        os.environ["_TEST_MAX_INT"] = "999"
+        try:
+            with self.assertRaises(ValueError):
+                coord._env_int("_TEST_MAX_INT", 10, max_val=100)
+        finally:
+            del os.environ["_TEST_MAX_INT"]
+
+    def test_env_float_rejects_non_float(self) -> None:
+        import os
+        os.environ["_TEST_BAD_FLOAT"] = "abc"
+        try:
+            with self.assertRaises(ValueError):
+                coord._env_float("_TEST_BAD_FLOAT", 1.0)
+        finally:
+            del os.environ["_TEST_BAD_FLOAT"]
+
+    def test_env_float_rejects_out_of_range(self) -> None:
+        import os
+        os.environ["_TEST_RANGE_FLOAT"] = "150.0"
+        try:
+            with self.assertRaises(ValueError):
+                coord._env_float("_TEST_RANGE_FLOAT", 90.0, min_val=0.0, max_val=100.0)
+        finally:
+            del os.environ["_TEST_RANGE_FLOAT"]
+
+    def test_env_int_returns_default_when_var_unset(self) -> None:
+        import os
+        os.environ.pop("_TEST_UNSET_VAR", None)
+        self.assertEqual(coord._env_int("_TEST_UNSET_VAR", 42), 42)
+
+    def test_worker_env_helpers_match_coordinator(self) -> None:
+        """Worker's _env_int/_env_float are independent but behave identically."""
+        import os
+        os.environ["_TEST_W"] = "5"
+        try:
+            self.assertEqual(worker._env_int("_TEST_W", 99), 5)
+        finally:
+            del os.environ["_TEST_W"]
+
+
+class TestPromptLengthValidation(unittest.TestCase):
+    """Prompt length limits are enforced at both coordinator and worker boundaries."""
+
+    def setUp(self) -> None:
+        _reset_coord_state()
+
+    def tearDown(self) -> None:
+        _reset_coord_state()
+
+    def test_coordinator_rejects_prompt_exceeding_max_chars(self) -> None:
+        """Prompt longer than MAX_PROMPT_CHARS raises HTTP 400."""
+        coord._workers.append(coord.WorkerState(url="http://worker-a", healthy=True))
+        original_limit = coord.MAX_PROMPT_CHARS
+        try:
+            coord.MAX_PROMPT_CHARS = 10
+            with patch.object(coord.httpx, "AsyncClient", side_effect=AssertionError("must not dispatch")):
+                with self.assertRaises(HTTPException) as ctx:
+                    asyncio.run(coord.chat_completions(
+                        _make_chat_req(messages=[coord.Message(role="user", content="x" * 20)])
+                    ))
+            self.assertEqual(ctx.exception.status_code, 400)
+        finally:
+            coord.MAX_PROMPT_CHARS = original_limit
+
+    def test_coordinator_accepts_prompt_at_exact_limit(self) -> None:
+        """Prompt exactly at MAX_PROMPT_CHARS passes the length check."""
+        original_limit = coord.MAX_PROMPT_CHARS
+        try:
+            coord.MAX_PROMPT_CHARS = 5
+            req = _make_chat_req(messages=[coord.Message(role="user", content="hello")])  # exactly 5 chars
+            prompt = "\n".join(m.content for m in req.messages)
+            self.assertLessEqual(len(prompt), coord.MAX_PROMPT_CHARS)
+        finally:
+            coord.MAX_PROMPT_CHARS = original_limit
+
+    def test_worker_generate_request_rejects_long_prompt(self) -> None:
+        """GenerateRequest.prompt field validator rejects oversized prompts."""
+        original_limit = worker.MAX_PROMPT_CHARS
+        try:
+            worker.MAX_PROMPT_CHARS = 10
+            with self.assertRaises(Exception):
+                worker.GenerateRequest(request_id="r", prompt="x" * 20, max_tokens=4)
+        finally:
+            worker.MAX_PROMPT_CHARS = original_limit
+
+    def test_worker_generate_request_accepts_prompt_at_limit(self) -> None:
+        """GenerateRequest accepts a prompt at exactly MAX_PROMPT_CHARS."""
+        original_limit = worker.MAX_PROMPT_CHARS
+        try:
+            worker.MAX_PROMPT_CHARS = 5
+            req = worker.GenerateRequest(request_id="r", prompt="hello", max_tokens=4)
+            self.assertEqual(req.prompt, "hello")
+        finally:
+            worker.MAX_PROMPT_CHARS = original_limit
+
+
+class TestRequestIdFingerprinting(unittest.TestCase):
+    """request_id reuse with a different prompt is detected and logged."""
+
+    def setUp(self) -> None:
+        _reset_coord_state()
+
+    def tearDown(self) -> None:
+        _reset_coord_state()
+
+    def test_same_prompt_fingerprint_matches(self) -> None:
+        coord._record_fingerprint("req-fp", "hello world")
+        self.assertTrue(coord._fingerprint_matches("req-fp", "hello world"))
+
+    def test_different_prompt_fingerprint_does_not_match(self) -> None:
+        coord._record_fingerprint("req-fp", "hello world")
+        self.assertFalse(coord._fingerprint_matches("req-fp", "different content"))
+
+    def test_unknown_request_id_fingerprint_always_matches(self) -> None:
+        """If no fingerprint was recorded, the check passes (no false positives)."""
+        self.assertTrue(coord._fingerprint_matches("req-unknown", "any content"))
+
+    def test_fingerprint_evicts_oldest_when_full(self) -> None:
+        """_request_fingerprints is bounded to COMPLETED_CACHE_MAX entries."""
+        original_max = coord.COMPLETED_CACHE_MAX
+        try:
+            coord.COMPLETED_CACHE_MAX = 3
+            for i in range(5):
+                coord._record_fingerprint(f"req-{i}", f"prompt-{i}")
+            self.assertLessEqual(len(coord._request_fingerprints), 3)
+        finally:
+            coord.COMPLETED_CACHE_MAX = original_max
+
+    def test_reuse_with_different_prompt_logs_warning(self) -> None:
+        """Returning a cached result for a reused request_id with a new prompt logs a warning."""
+        cached = {
+            "id": "chatcmpl-phase2",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "test-model",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "old"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+        coord._cache_completion("req-reuse", cached)  # type: ignore[arg-type]
+        coord._record_fingerprint("req-reuse", "original prompt")
+
+        import logging as _logging
+        with self.assertLogs("coordinator", level=_logging.WARNING) as log_ctx:
+            result = asyncio.run(coord.chat_completions(
+                coord.ChatRequest(
+                    model="test-model",
+                    messages=[coord.Message(role="user", content="completely different")],
+                    max_tokens=4,
+                    stream=False,
+                    request_id="req-reuse",
+                )
+            ))
+
+        self.assertEqual(result, cached)
+        self.assertTrue(any("reused" in msg for msg in log_ctx.output))
 
 
 if __name__ == "__main__":

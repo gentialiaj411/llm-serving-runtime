@@ -8,11 +8,11 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any, AsyncGenerator, AsyncIterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from runtime.phase2.kv_allocator import PagedKVAllocator
 
 class _JsonFormatter(logging.Formatter):
@@ -51,11 +51,40 @@ def _configure_logging() -> None:
 
 _log = logging.getLogger("worker")
 
-CANCELLED_TTL_S = float(os.getenv("WORKER_CANCELLED_TTL_S", "3600"))
-CANCELLED_CACHE_MAX = int(os.getenv("WORKER_CANCELLED_CACHE_MAX", "10000"))
-MAX_KV_RETRIES = int(os.getenv("WORKER_MAX_KV_RETRIES", "100"))
-ADMISSION_TIMEOUT_S = float(os.getenv("WORKER_ADMISSION_TIMEOUT_S", "30.0"))
-KV_BACKPRESSURE_PCT = float(os.getenv("WORKER_KV_BACKPRESSURE_PCT", "90.0"))
+
+def _env_int(name: str, default: int, *, min_val: int | None = None, max_val: int | None = None) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        val = int(raw)
+    except ValueError:
+        raise ValueError(f"Env var {name}={raw!r}: expected integer") from None
+    if min_val is not None and val < min_val:
+        raise ValueError(f"Env var {name}={val}: must be >= {min_val}")
+    if max_val is not None and val > max_val:
+        raise ValueError(f"Env var {name}={val}: must be <= {max_val}")
+    return val
+
+
+def _env_float(name: str, default: float, *, min_val: float | None = None, max_val: float | None = None) -> float:
+    raw = os.getenv(name, str(default))
+    try:
+        val = float(raw)
+    except ValueError:
+        raise ValueError(f"Env var {name}={raw!r}: expected float") from None
+    if min_val is not None and val < min_val:
+        raise ValueError(f"Env var {name}={val}: must be >= {min_val}")
+    if max_val is not None and val > max_val:
+        raise ValueError(f"Env var {name}={val}: must be <= {max_val}")
+    return val
+
+
+CANCELLED_TTL_S = _env_float("WORKER_CANCELLED_TTL_S", 3600.0, min_val=1.0)
+CANCELLED_CACHE_MAX = _env_int("WORKER_CANCELLED_CACHE_MAX", 10000, min_val=1)
+MAX_KV_RETRIES = _env_int("WORKER_MAX_KV_RETRIES", 100, min_val=1)
+ADMISSION_TIMEOUT_S = _env_float("WORKER_ADMISSION_TIMEOUT_S", 30.0, min_val=0.1)
+KV_BACKPRESSURE_PCT = _env_float("WORKER_KV_BACKPRESSURE_PCT", 90.0, min_val=0.0, max_val=100.0)
+MAX_PROMPT_CHARS = _env_int("WORKER_MAX_PROMPT_CHARS", 100_000, min_val=1)
+BATCH_DECODE_STEPS = _env_int("PHASE2_BATCH_DECODE_STEPS", 16, min_val=1, max_val=512)
 
 
 class GenerateRequest(BaseModel):
@@ -64,6 +93,13 @@ class GenerateRequest(BaseModel):
     max_tokens: int = Field(default=64, ge=1, le=2048)
     temperature: float = 0.0
     deadline_unix_ms: int | None = None
+
+    @field_validator("prompt")
+    @classmethod
+    def prompt_within_length_limit(cls, v: str) -> str:
+        if len(v) > MAX_PROMPT_CHARS:
+            raise ValueError(f"prompt exceeds {MAX_PROMPT_CHARS} character limit ({len(v)} chars)")
+        return v
 
 
 @dataclass
@@ -455,8 +491,8 @@ class TransformersBackend:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _allocator, _batch_task
     _configure_logging()
-    total_blocks = int(os.getenv("KV_TOTAL_BLOCKS", "4096"))
-    block_size_tokens = int(os.getenv("KV_BLOCK_SIZE_TOKENS", "16"))
+    total_blocks = _env_int("KV_TOTAL_BLOCKS", 4096, min_val=1)
+    block_size_tokens = _env_int("KV_BLOCK_SIZE_TOKENS", 16, min_val=1)
     _allocator = PagedKVAllocator(total_blocks=total_blocks, block_size_tokens=block_size_tokens)
     _log.info("worker starting", extra={"total_blocks": total_blocks, "block_size_tokens": block_size_tokens})
     _batch_task = asyncio.create_task(_continuous_batch_loop())
@@ -474,7 +510,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="phase2-worker", lifespan=lifespan)
 
 
-def _get_backend() -> Any | None:
+def _get_backend() -> TransformersBackend | None:
     global _allocator, _backend
     if _backend_name == "synthetic":
         return None
@@ -482,8 +518,8 @@ def _get_backend() -> Any | None:
         raise RuntimeError("PHASE2_BACKEND must be one of: synthetic, transformers")
     if _backend is None:
         _backend = TransformersBackend()
-        total_blocks = int(os.getenv("KV_TOTAL_BLOCKS", "4096"))
-        block_size_tokens = int(os.getenv("KV_BLOCK_SIZE_TOKENS", "16"))
+        total_blocks = _env_int("KV_TOTAL_BLOCKS", 4096, min_val=1)
+        block_size_tokens = _env_int("KV_BLOCK_SIZE_TOKENS", 16, min_val=1)
         _allocator = PagedKVAllocator(
             total_blocks=total_blocks,
             block_size_tokens=block_size_tokens,
@@ -618,8 +654,7 @@ async def _continuous_batch_loop() -> None:
         batch_tokens: dict[str, str] = {}
         batched_ids: set[str] = set()
         if backend is not None and ready and not getattr(backend, "speculative", False):
-            batch_steps = max(1, int(os.getenv("PHASE2_BATCH_DECODE_STEPS", "16")))
-            batch_steps = min(batch_steps, *(state.req.max_tokens - len(state.generated) for state in ready))
+            batch_steps = min(BATCH_DECODE_STEPS, *(state.req.max_tokens - len(state.generated) for state in ready))
             batch_token_lists = backend.next_tokens_batch(ready, batch_steps)
             for state in ready:
                 rid = state.req.request_id
@@ -707,7 +742,7 @@ async def generate_stream(req: GenerateRequest) -> StreamingResponse:
     stream_queue: asyncio.Queue = asyncio.Queue()
     await _queue.put(Pending(req=req, fut=fut, stream_queue=stream_queue))
 
-    async def events() -> Any:
+    async def events() -> AsyncGenerator[str, None]:
         while True:
             event = await stream_queue.get()
             yield json.dumps(event) + "\n"
