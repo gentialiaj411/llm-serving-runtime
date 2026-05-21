@@ -95,6 +95,9 @@ _metrics: dict[str, int] = {
     "retry_attempts_total": 0,
     "cancellations_total": 0,
 }
+# Protects the check-then-dispatch sequence so two concurrent requests sharing
+# the same request_id cannot both miss the cache and double-dispatch.
+_admission_lock = asyncio.Lock()
 
 
 @asynccontextmanager
@@ -420,12 +423,14 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any] | StreamingRespon
     request_id = req.request_id or f"req-{int(time.time()*1e6)}"
     _metrics["requests_total"] += 1
 
-    # Replay-safe: return cached terminal completion for duplicate request id.
-    cached = _get_completion(request_id)
-    if cached is not None:
-        return cached
-    if _is_cancelled(request_id):
-        raise HTTPException(status_code=499, detail="Request previously cancelled")
+    # Hold _admission_lock while checking replay-safety conditions so two concurrent
+    # requests sharing the same request_id cannot both miss the cache and double-dispatch.
+    async with _admission_lock:
+        cached = _get_completion(request_id)
+        if cached is not None:
+            return cached
+        if _is_cancelled(request_id):
+            raise HTTPException(status_code=499, detail="Request previously cancelled")
 
     if req.stream:
         _metrics["stream_requests_total"] += 1
@@ -436,10 +441,14 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any] | StreamingRespon
     _metrics["nonstream_requests_total"] += 1
 
     skipped_workers: set[str] = set()
+    worker: WorkerState | None = None
     while True:
-        worker = _choose_worker(skipped_workers)
-        _mark_active(request_id, worker.url)
-        worker.inflight += 1
+        # Atomically select a worker and mark the request active so inflight
+        # counts and the active map are never observed in an inconsistent state.
+        async with _admission_lock:
+            worker = _choose_worker(skipped_workers)
+            _mark_active(request_id, worker.url)
+            worker.inflight += 1
         _append_log(
             {
                 "ts_unix_ms": int(time.time() * 1000),
