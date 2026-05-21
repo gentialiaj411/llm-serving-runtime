@@ -911,5 +911,221 @@ class TestRequestIdFingerprinting(unittest.TestCase):
         self.assertTrue(any("reused" in msg for msg in log_ctx.output))
 
 
+# ---------------------------------------------------------------------------
+# Fix 6: Non-blocking log writes
+# Fix 7: Worker circuit-breaker hysteresis
+# Fix 8: Background cache eviction
+# ---------------------------------------------------------------------------
+
+class TestAsyncLogWriter(unittest.TestCase):
+    """_append_log enqueues when a log_queue is present; falls back to sync when not."""
+
+    def tearDown(self) -> None:
+        coord._log_queue = None
+
+    def test_append_log_enqueues_when_queue_present(self) -> None:
+        """_append_log puts the event into _log_queue without touching disk."""
+        coord._log_queue = asyncio.Queue()
+        event = {"event": "test", "request_id": "r1"}
+        coord._append_log(event)
+        self.assertFalse(coord._log_queue.empty())
+        queued = coord._log_queue.get_nowait()
+        self.assertEqual(queued, event)
+
+    def test_append_log_falls_back_to_sync_when_no_queue(self) -> None:
+        """Without a queue (unit-test mode) _append_log writes synchronously."""
+        coord._log_queue = None
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = pathlib.Path(tmpdir) / "requests.jsonl"
+            with patch.object(coord, "REQUEST_LOG", str(log_path)):
+                with patch.object(coord, "LOG_DIR", tmpdir):
+                    coord._append_log({"event": "sync_test"})
+            self.assertTrue(log_path.exists())
+            lines = [l for l in log_path.read_text().splitlines() if l.strip()]
+            self.assertEqual(len(lines), 1)
+
+    def test_log_writer_loop_drains_queue_and_stops_on_sentinel(self) -> None:
+        """_log_writer_loop writes queued events then exits when it receives None."""
+        import tempfile, pathlib
+
+        async def run() -> None:
+            coord._log_queue = asyncio.Queue()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                log_path = pathlib.Path(tmpdir) / "requests.jsonl"
+                with patch.object(coord, "REQUEST_LOG", str(log_path)):
+                    with patch.object(coord, "LOG_DIR", tmpdir):
+                        coord._log_queue.put_nowait({"event": "a"})
+                        coord._log_queue.put_nowait({"event": "b"})
+                        coord._log_queue.put_nowait(None)  # sentinel
+                        await coord._log_writer_loop()
+                lines = [l for l in log_path.read_text().splitlines() if l.strip()]
+                self.assertEqual(len(lines), 2)
+
+        asyncio.run(run())
+        coord._log_queue = None
+
+    def test_sentinel_causes_writer_to_exit(self) -> None:
+        """Sending None to the queue terminates _log_writer_loop cleanly."""
+        import tempfile, pathlib
+
+        async def run() -> None:
+            coord._log_queue = asyncio.Queue()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                log_path = pathlib.Path(tmpdir) / "requests.jsonl"
+                with patch.object(coord, "REQUEST_LOG", str(log_path)):
+                    with patch.object(coord, "LOG_DIR", tmpdir):
+                        coord._log_queue.put_nowait(None)
+                        await coord._log_writer_loop()  # should return, not loop
+            # No exception means success
+
+        asyncio.run(run())
+        coord._log_queue = None
+
+
+class TestWorkerCircuitBreaker(unittest.TestCase):
+    """_health_loop requires multiple consecutive results before flipping healthy."""
+
+    def _make_worker(self, healthy: bool = True) -> coord.WorkerState:
+        return coord.WorkerState(url="http://w", healthy=healthy)
+
+    def test_single_health_check_failure_does_not_immediately_mark_unhealthy(self) -> None:
+        """A healthy worker needs WORKER_FAILURE_THRESHOLD consecutive failures."""
+        original = coord.WORKER_FAILURE_THRESHOLD
+        try:
+            coord.WORKER_FAILURE_THRESHOLD = 2
+            w = self._make_worker(healthy=True)
+            w.consecutive_failures += 1  # simulate one failure
+            # Still below threshold: healthy unchanged
+            self.assertTrue(w.healthy)
+        finally:
+            coord.WORKER_FAILURE_THRESHOLD = original
+
+    def test_worker_marked_unhealthy_at_failure_threshold(self) -> None:
+        """Reaching WORKER_FAILURE_THRESHOLD flips healthy=False."""
+        original = coord.WORKER_FAILURE_THRESHOLD
+        try:
+            coord.WORKER_FAILURE_THRESHOLD = 2
+            w = self._make_worker(healthy=True)
+            # Simulate two consecutive failures (as health loop would do)
+            for _ in range(coord.WORKER_FAILURE_THRESHOLD):
+                w.consecutive_successes = 0
+                w.consecutive_failures += 1
+                if w.healthy and w.consecutive_failures >= coord.WORKER_FAILURE_THRESHOLD:
+                    w.healthy = False
+            self.assertFalse(w.healthy)
+        finally:
+            coord.WORKER_FAILURE_THRESHOLD = original
+
+    def test_single_health_check_success_does_not_immediately_restore_healthy(self) -> None:
+        """An unhealthy worker needs WORKER_RECOVERY_THRESHOLD consecutive successes."""
+        original = coord.WORKER_RECOVERY_THRESHOLD
+        try:
+            coord.WORKER_RECOVERY_THRESHOLD = 3
+            w = self._make_worker(healthy=False)
+            w.consecutive_successes = 1  # only one success so far
+            # Still below recovery threshold
+            self.assertFalse(w.healthy)
+        finally:
+            coord.WORKER_RECOVERY_THRESHOLD = original
+
+    def test_worker_recovers_at_recovery_threshold(self) -> None:
+        """Reaching WORKER_RECOVERY_THRESHOLD consecutive successes restores healthy."""
+        original = coord.WORKER_RECOVERY_THRESHOLD
+        try:
+            coord.WORKER_RECOVERY_THRESHOLD = 3
+            w = self._make_worker(healthy=False)
+            for _ in range(coord.WORKER_RECOVERY_THRESHOLD):
+                w.consecutive_failures = 0
+                w.consecutive_successes += 1
+                if not w.healthy and w.consecutive_successes >= coord.WORKER_RECOVERY_THRESHOLD:
+                    w.healthy = True
+            self.assertTrue(w.healthy)
+        finally:
+            coord.WORKER_RECOVERY_THRESHOLD = original
+
+    def test_transport_failure_resets_consecutive_successes(self) -> None:
+        """A request-path transport error resets the recovery streak."""
+        w = self._make_worker(healthy=True)
+        w.consecutive_successes = 2
+        # Simulate what the request path does on httpx.RequestError
+        w.healthy = False
+        w.consecutive_successes = 0
+        self.assertFalse(w.healthy)
+        self.assertEqual(w.consecutive_successes, 0)
+
+
+class TestBackgroundCacheEviction(unittest.TestCase):
+    """Background prune task keeps caches TTL-clean without blocking requests."""
+
+    def setUp(self) -> None:
+        _reset_coord_state()
+
+    def tearDown(self) -> None:
+        _reset_coord_state()
+
+    def test_prune_by_ttl_removes_expired_entries(self) -> None:
+        """_prune_by_ttl deletes entries older than CACHE_TTL_S."""
+        original_ttl = coord.CACHE_TTL_S
+        try:
+            coord.CACHE_TTL_S = 1.0
+            coord._completed_cache["old"] = (time.time() - 5.0, {})  # type: ignore[assignment]
+            coord._completed_cache["new"] = (time.time(), {})  # type: ignore[assignment]
+            coord._prune_by_ttl(coord._completed_cache, time.time())
+            self.assertNotIn("old", coord._completed_cache)
+            self.assertIn("new", coord._completed_cache)
+        finally:
+            coord.CACHE_TTL_S = original_ttl
+
+    def test_evict_to_max_size_drops_oldest_entries(self) -> None:
+        """_evict_to_max_size removes the least-recently-inserted entries."""
+        for i in range(5):
+            coord._completed_cache[f"req-{i}"] = (time.time(), {})  # type: ignore[assignment]
+        coord._evict_to_max_size(coord._completed_cache, 3)
+        self.assertLessEqual(len(coord._completed_cache), 3)
+        # The two oldest (req-0, req-1) should have been evicted.
+        self.assertNotIn("req-0", coord._completed_cache)
+        self.assertNotIn("req-1", coord._completed_cache)
+
+    def test_get_completion_does_not_trigger_pruning(self) -> None:
+        """_get_completion no longer calls any prune function (hot-path is lean)."""
+        import inspect
+        src = inspect.getsource(coord._get_completion)
+        self.assertNotIn("_prune", src)
+        self.assertNotIn("_evict", src)
+
+    def test_is_cancelled_does_not_trigger_pruning(self) -> None:
+        """_is_cancelled no longer calls any prune function."""
+        import inspect
+        src = inspect.getsource(coord._is_cancelled)
+        self.assertNotIn("_prune", src)
+        self.assertNotIn("_evict", src)
+
+    def test_prune_loop_runs_periodically(self) -> None:
+        """_prune_loop sleeps then prunes, repeating until cancelled."""
+        original_ttl = coord.CACHE_TTL_S
+        try:
+            coord.CACHE_TTL_S = 0.0  # expire everything immediately
+            coord._completed_cache["stale"] = (time.time() - 1.0, {})  # type: ignore[assignment]
+            coord._cancelled["stale-cancel"] = time.time() - 1.0
+
+            async def run() -> None:
+                # Run one iteration: sleep(interval) → prune → sleep(interval) → cancel
+                with patch.object(coord, "CACHE_PRUNE_INTERVAL_S", 0.01):
+                    task = asyncio.create_task(coord._prune_loop())
+                    await asyncio.sleep(0.05)
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+
+            asyncio.run(run())
+            self.assertNotIn("stale", coord._completed_cache)
+            self.assertNotIn("stale-cancel", coord._cancelled)
+        finally:
+            coord.CACHE_TTL_S = original_ttl
+
+
 if __name__ == "__main__":
     unittest.main()

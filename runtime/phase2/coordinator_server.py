@@ -112,6 +112,15 @@ ACTIVE_CACHE_MAX = _env_int("COORDINATOR_ACTIVE_CACHE_MAX", 10000, min_val=1)
 COMPLETED_CACHE_MAX = _env_int("COORDINATOR_COMPLETED_CACHE_MAX", 10000, min_val=1)
 CANCELLED_CACHE_MAX = _env_int("COORDINATOR_CANCELLED_CACHE_MAX", 10000, min_val=1)
 MAX_PROMPT_CHARS = _env_int("COORDINATOR_MAX_PROMPT_CHARS", 100_000, min_val=1)
+# Fix 7: Circuit breaker thresholds for worker health.
+# A worker is marked unhealthy after FAILURE_THRESHOLD consecutive health-check
+# failures; it re-enters the pool only after RECOVERY_THRESHOLD consecutive
+# successes.  Transport errors in the request path immediately flip healthy=False
+# and also reset the success streak.
+WORKER_FAILURE_THRESHOLD = _env_int("COORDINATOR_HEALTH_FAILURE_THRESHOLD", 2, min_val=1)
+WORKER_RECOVERY_THRESHOLD = _env_int("COORDINATOR_HEALTH_RECOVERY_THRESHOLD", 3, min_val=1)
+# Fix 8: Interval for the background cache-pruning task.
+CACHE_PRUNE_INTERVAL_S = _env_float("COORDINATOR_CACHE_PRUNE_INTERVAL_S", 60.0, min_val=1.0)
 
 
 class Message(BaseModel):
@@ -134,6 +143,9 @@ class WorkerState(BaseModel):
     healthy: bool = False
     inflight: int = 0
     last_ok_unix_ms: int = 0
+    # Fix 7: streak counters for circuit-breaker hysteresis.
+    consecutive_failures: int = 0
+    consecutive_successes: int = 0
 
 
 _workers: list[WorkerState] = []
@@ -143,6 +155,10 @@ _cancelled: collections.OrderedDict[str, float] = collections.OrderedDict()
 _request_fingerprints: collections.OrderedDict[str, str] = collections.OrderedDict()
 _pending_recovery: set[str] = set()
 _health_task: asyncio.Task | None = None
+_prune_task: asyncio.Task | None = None
+# Fix 6: async log writer — queue populated by _append_log, drained by background task.
+_log_queue: asyncio.Queue[dict[str, Any] | None] | None = None
+_log_writer_task: asyncio.Task | None = None
 _ttft_ms_samples: collections.deque[float] = collections.deque(maxlen=1000)
 _metrics: dict[str, int] = {
     "requests_total": 0,
@@ -158,7 +174,7 @@ _admission_lock = asyncio.Lock()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global _health_task
+    global _health_task, _prune_task, _log_queue, _log_writer_task
     worker_urls = os.getenv("WORKER_URLS", "http://127.0.0.1:8102")
     _configure_logging()
     _workers.clear()
@@ -168,16 +184,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             _workers.append(WorkerState(url=u))
     _log.info("coordinator starting", extra={"worker_count": len(_workers)})
     _load_recovery_state()
+    _log_queue = asyncio.Queue()
+    _log_writer_task = asyncio.create_task(_log_writer_loop())
     _health_task = asyncio.create_task(_health_loop())
+    _prune_task = asyncio.create_task(_prune_loop())
     try:
         yield
     finally:
-        if _health_task is not None:
-            _health_task.cancel()
+        for task in (_health_task, _prune_task):
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        # Drain the log queue: send the sentinel and wait for the writer to finish.
+        if _log_queue is not None:
+            await _log_queue.put(None)
+        if _log_writer_task is not None:
             try:
-                await _health_task
+                await _log_writer_task
             except asyncio.CancelledError:
                 pass
+        _log_queue = None
 
 
 app = FastAPI(title="phase2-coordinator", lifespan=lifespan)
@@ -196,27 +225,45 @@ def _pctl(values: list[float], q: float) -> float:
     return float(xs[lo] * (1.0 - w) + xs[hi] * w)
 
 
+def _evict_to_max_size(
+    cache: collections.OrderedDict,
+    max_items: int,
+) -> None:
+    """Drop the oldest entries until the cache is within max_items."""
+    while len(cache) > max_items:
+        cache.popitem(last=False)
+
+
+def _prune_by_ttl(
+    cache: collections.OrderedDict[str, tuple[float, Any] | float],
+    now: float,
+) -> None:
+    """Remove entries whose timestamp is older than CACHE_TTL_S."""
+    expired = [
+        key for key, value in cache.items()
+        if now - (value[0] if isinstance(value, tuple) else value) > CACHE_TTL_S
+    ]
+    for key in expired:
+        cache.pop(key, None)
+
+
 def _prune_ordered_cache(
     cache: collections.OrderedDict[str, tuple[float, Any] | float],
     max_items: int,
     now: float | None = None,
 ) -> None:
-    now = now or time.time()
-    expired = [key for key, value in cache.items() if now - (value[0] if isinstance(value, tuple) else value) > CACHE_TTL_S]
-    for key in expired:
-        cache.pop(key, None)
-    while len(cache) > max_items:
-        cache.popitem(last=False)
+    """Combined size + TTL prune (kept for recovery-path and backward compat)."""
+    _prune_by_ttl(cache, now or time.time())
+    _evict_to_max_size(cache, max_items)
 
 
 def _cache_completion(request_id: str, response: CompletionResponse) -> None:
     _completed_cache[request_id] = (time.time(), response)
     _completed_cache.move_to_end(request_id)
-    _prune_ordered_cache(_completed_cache, COMPLETED_CACHE_MAX)
+    _evict_to_max_size(_completed_cache, COMPLETED_CACHE_MAX)
 
 
 def _get_completion(request_id: str) -> CompletionResponse | None:
-    _prune_ordered_cache(_completed_cache, COMPLETED_CACHE_MAX)
     cached = _completed_cache.get(request_id)
     if cached is None:
         return None
@@ -242,22 +289,20 @@ def _fingerprint_matches(request_id: str, prompt: str) -> bool:
 def _mark_cancelled(request_id: str) -> None:
     _cancelled[request_id] = time.time()
     _cancelled.move_to_end(request_id)
-    _prune_ordered_cache(_cancelled, CANCELLED_CACHE_MAX)
+    _evict_to_max_size(_cancelled, CANCELLED_CACHE_MAX)
 
 
 def _is_cancelled(request_id: str) -> bool:
-    _prune_ordered_cache(_cancelled, CANCELLED_CACHE_MAX)
     return request_id in _cancelled
 
 
 def _mark_active(request_id: str, worker_url: str) -> None:
     _active[request_id] = (time.time(), worker_url)
     _active.move_to_end(request_id)
-    _prune_ordered_cache(_active, ACTIVE_CACHE_MAX)
+    _evict_to_max_size(_active, ACTIVE_CACHE_MAX)
 
 
 def _get_active_worker(request_id: str) -> str | None:
-    _prune_ordered_cache(_active, ACTIVE_CACHE_MAX)
     active = _active.get(request_id)
     if active is None:
         return None
@@ -269,7 +314,8 @@ def _ensure_log_dir() -> None:
     os.makedirs(LOG_DIR, exist_ok=True)
 
 
-def _append_log(event: dict[str, Any]) -> None:
+def _write_log_entry(event: dict[str, Any]) -> None:
+    """Synchronous disk write — runs in a thread via the log writer loop."""
     _ensure_log_dir()
     if REQUEST_LOG_MAX_BYTES > 0 and os.path.exists(REQUEST_LOG) and os.path.getsize(REQUEST_LOG) > REQUEST_LOG_MAX_BYTES:
         rotated = f"{REQUEST_LOG}.1"
@@ -278,6 +324,44 @@ def _append_log(event: dict[str, Any]) -> None:
         os.replace(REQUEST_LOG, rotated)
     with open(REQUEST_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(event) + "\n")
+
+
+def _append_log(event: dict[str, Any]) -> None:
+    """Enqueue a log entry for the background writer.
+
+    Falls back to a synchronous write when called outside of a running lifespan
+    (e.g. unit tests that do not start the server).
+    """
+    if _log_queue is not None:
+        _log_queue.put_nowait(event)
+    else:
+        _write_log_entry(event)
+
+
+async def _log_writer_loop() -> None:
+    """Fix 6: drain _log_queue and write entries to disk via asyncio.to_thread.
+
+    Sending None is the sentinel that signals clean shutdown.
+    """
+    while True:
+        event = await _log_queue.get()  # type: ignore[union-attr]
+        if event is None:
+            break
+        await asyncio.to_thread(_write_log_entry, event)
+
+
+async def _prune_loop() -> None:
+    """Fix 8: periodically evict TTL-expired entries from all caches.
+
+    Keeps the TTL sweep off the request hot-path; size eviction still happens
+    inline on every write so caches never grow unboundedly between sweeps.
+    """
+    while True:
+        await asyncio.sleep(CACHE_PRUNE_INTERVAL_S)
+        now = time.time()
+        _prune_by_ttl(_completed_cache, now)
+        _prune_by_ttl(_cancelled, now)
+        _prune_by_ttl(_active, now)
 
 
 def _load_recovery_state() -> None:
@@ -306,23 +390,47 @@ def _load_recovery_state() -> None:
 
 
 async def _health_loop() -> None:
+    """Fix 7: circuit-breaker health loop with failure/recovery hysteresis.
+
+    A healthy worker is marked unhealthy only after WORKER_FAILURE_THRESHOLD
+    consecutive failed checks.  An unhealthy worker is only re-admitted after
+    WORKER_RECOVERY_THRESHOLD consecutive successful checks, preventing a
+    flapping worker from immediately rejoining the pool.
+    """
     while True:
         async with httpx.AsyncClient(timeout=2.0) as client:
             for w in _workers:
                 try:
                     r = await client.get(f"{w.url}/healthz")
-                    prev = w.healthy
-                    w.healthy = r.status_code == 200
-                    if w.healthy:
+                    if r.status_code == 200:
+                        w.consecutive_failures = 0
+                        w.consecutive_successes += 1
                         w.last_ok_unix_ms = int(time.time() * 1000)
-                    if prev and not w.healthy:
-                        _log.warning("worker became unhealthy", extra={"worker_url": w.url})
-                    elif not prev and w.healthy:
-                        _log.info("worker recovered", extra={"worker_url": w.url})
+                        if not w.healthy and w.consecutive_successes >= WORKER_RECOVERY_THRESHOLD:
+                            w.healthy = True
+                            _log.info(
+                                "worker recovered",
+                                extra={"worker_url": w.url, "after_successes": w.consecutive_successes},
+                            )
+                    else:
+                        w.consecutive_successes = 0
+                        w.consecutive_failures += 1
+                        if w.healthy and w.consecutive_failures >= WORKER_FAILURE_THRESHOLD:
+                            w.healthy = False
+                            _log.warning(
+                                "worker marked unhealthy",
+                                extra={"worker_url": w.url, "consecutive_failures": w.consecutive_failures},
+                            )
                 except Exception:
-                    if w.healthy:
-                        _log.warning("health check failed", extra={"worker_url": w.url}, exc_info=True)
-                    w.healthy = False
+                    w.consecutive_successes = 0
+                    w.consecutive_failures += 1
+                    if w.healthy and w.consecutive_failures >= WORKER_FAILURE_THRESHOLD:
+                        w.healthy = False
+                        _log.warning(
+                            "worker marked unhealthy after health check exception",
+                            extra={"worker_url": w.url, "consecutive_failures": w.consecutive_failures},
+                            exc_info=True,
+                        )
         await asyncio.sleep(1.0)
 
 
@@ -465,6 +573,7 @@ async def _worker_stream_with_retries(req: ChatRequest, prompt: str, request_id:
             return
         except httpx.RequestError as exc:
             worker.healthy = False
+            worker.consecutive_successes = 0
             skipped_workers.add(worker.url)
             _metrics["retry_attempts_total"] += 1
             _log.warning(
@@ -567,6 +676,7 @@ async def chat_completions(req: ChatRequest) -> CompletionResponse | StreamingRe
             raise HTTPException(status_code=408, detail="Deadline exceeded")
         except httpx.RequestError as exc:
             worker.healthy = False
+            worker.consecutive_successes = 0
             skipped_workers.add(worker.url)
             _append_log(
                 {
