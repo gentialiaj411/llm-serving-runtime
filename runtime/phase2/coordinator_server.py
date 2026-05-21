@@ -9,6 +9,7 @@ import logging
 import os
 import time
 from typing import Any, AsyncGenerator, AsyncIterator, TypedDict
+import uuid
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -611,7 +612,7 @@ async def chat_completions(req: ChatRequest) -> CompletionResponse | StreamingRe
             detail=f"Prompt too long: {len(prompt)} chars exceeds limit of {MAX_PROMPT_CHARS}",
         )
 
-    request_id = req.request_id or f"req-{int(time.time()*1e6)}"
+    request_id = req.request_id or uuid.uuid4().hex
     _metrics["requests_total"] += 1
 
     # Hold _admission_lock while checking replay-safety conditions so two concurrent

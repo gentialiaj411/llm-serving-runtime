@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import unittest
 from unittest.mock import patch
@@ -1125,6 +1126,152 @@ class TestBackgroundCacheEviction(unittest.TestCase):
             self.assertNotIn("stale-cancel", coord._cancelled)
         finally:
             coord.CACHE_TTL_S = original_ttl
+
+
+# ---------------------------------------------------------------------------
+# Fix 9: UUID request IDs
+# Fix 10: Thread-safe backend init
+# ---------------------------------------------------------------------------
+
+class TestUUIDRequestIds(unittest.TestCase):
+    """When no request_id is supplied the coordinator generates a unique UUID."""
+
+    def setUp(self) -> None:
+        _reset_coord_state()
+
+    def tearDown(self) -> None:
+        _reset_coord_state()
+
+    def test_generated_id_is_unique_per_request(self) -> None:
+        """Two requests without explicit IDs get different generated IDs."""
+        import uuid as _uuid
+
+        generated: list[str] = []
+
+        async def run() -> None:
+            coord._workers.append(coord.WorkerState(url="http://w", healthy=True))
+            for _ in range(3):
+                rid_before = set(coord._active.keys())
+                with patch.object(coord.httpx, "AsyncClient", side_effect=httpx.RequestError("fail", request=httpx.Request("POST", "http://w/generate"))):
+                    with patch.object(coord, "_append_log", lambda e: None):
+                        try:
+                            await coord.chat_completions(_make_chat_req())
+                        except Exception:
+                            pass
+                new_ids = set(coord._active.keys()) | set(coord._completed_cache.keys()) | set(coord._cancelled.keys())
+                added = new_ids - rid_before
+                generated.extend(added)
+
+        asyncio.run(run())
+        self.assertEqual(len(generated), len(set(generated)), "Each request should have a unique ID")
+
+    def test_generated_id_is_32_hex_chars(self) -> None:
+        """UUID hex IDs are exactly 32 lowercase hex characters (uuid4.hex format)."""
+        import re
+
+        coord._workers.append(coord.WorkerState(url="http://w", healthy=True))
+        captured_id: list[str] = []
+
+        orig_mark_active = coord._mark_active
+
+        def capture(request_id: str, worker_url: str) -> None:
+            captured_id.append(request_id)
+            orig_mark_active(request_id, worker_url)
+
+        async def run() -> None:
+            with patch.object(coord, "_mark_active", capture):
+                with patch.object(coord.httpx, "AsyncClient", side_effect=httpx.RequestError("fail", request=httpx.Request("POST", "http://w/generate"))):
+                    with patch.object(coord, "_append_log", lambda e: None):
+                        try:
+                            await coord.chat_completions(_make_chat_req())
+                        except Exception:
+                            pass
+
+        asyncio.run(run())
+        self.assertTrue(captured_id, "Expected _mark_active to be called")
+        rid = captured_id[0]
+        self.assertRegex(rid, r'^[0-9a-f]{32}$', f"Expected 32-char hex UUID, got {rid!r}")
+
+    def test_explicit_request_id_is_preserved(self) -> None:
+        """A caller-supplied request_id is not replaced by a generated UUID."""
+        coord._workers.append(coord.WorkerState(url="http://w", healthy=True))
+        captured_id: list[str] = []
+
+        orig_mark_active = coord._mark_active
+
+        def capture(request_id: str, worker_url: str) -> None:
+            captured_id.append(request_id)
+            orig_mark_active(request_id, worker_url)
+
+        async def run() -> None:
+            with patch.object(coord, "_mark_active", capture):
+                with patch.object(coord.httpx, "AsyncClient", side_effect=httpx.RequestError("fail", request=httpx.Request("POST", "http://w/generate"))):
+                    with patch.object(coord, "_append_log", lambda e: None):
+                        try:
+                            await coord.chat_completions(_make_chat_req(request_id="my-custom-id"))
+                        except Exception:
+                            pass
+
+        asyncio.run(run())
+        self.assertIn("my-custom-id", captured_id)
+
+
+class TestThreadSafeBackendInit(unittest.TestCase):
+    """_get_backend() uses a threading.Lock to prevent concurrent model loads."""
+
+    def test_backend_lock_is_threading_lock(self) -> None:
+        """_backend_lock is a real threading.Lock (or RLock) instance."""
+        import threading
+        self.assertIsInstance(worker._backend_lock, type(threading.Lock()))
+
+    def test_get_backend_returns_none_for_synthetic(self) -> None:
+        """_get_backend() returns None for the default synthetic backend without acquiring the lock."""
+        import threading
+        original_name = worker._backend_name
+        try:
+            worker._backend_name = "synthetic"
+            result = worker._get_backend()
+            self.assertIsNone(result)
+        finally:
+            worker._backend_name = original_name
+
+    def test_get_backend_raises_for_unknown_backend(self) -> None:
+        """_get_backend() raises RuntimeError for an unknown backend name."""
+        original_name = worker._backend_name
+        try:
+            worker._backend_name = "unknown_backend"
+            with self.assertRaises(RuntimeError):
+                worker._get_backend()
+        finally:
+            worker._backend_name = original_name
+
+    def test_get_backend_skips_lock_when_backend_already_loaded(self) -> None:
+        """Second call returns the cached _backend without re-entering the lock."""
+        import threading
+
+        lock_acquisitions = []
+        original_lock = worker._backend_lock
+        original_backend = worker._backend
+
+        class TrackingLock:
+            def __enter__(self):
+                lock_acquisitions.append(1)
+                return original_lock.__enter__()
+            def __exit__(self, *a):
+                return original_lock.__exit__(*a)
+
+        try:
+            sentinel = object()
+            worker._backend = sentinel  # type: ignore[assignment]
+            worker._backend_lock = TrackingLock()  # type: ignore[assignment]
+            worker._backend_name = "transformers"
+            result = worker._get_backend()
+            self.assertIs(result, sentinel)
+            self.assertEqual(lock_acquisitions, [], "Lock should not be acquired when backend is cached")
+        finally:
+            worker._backend = original_backend
+            worker._backend_lock = original_lock
+            worker._backend_name = os.getenv("PHASE2_BACKEND", "synthetic").strip().lower()
 
 
 if __name__ == "__main__":

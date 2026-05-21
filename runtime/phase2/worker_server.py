@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, AsyncIterator
@@ -136,6 +137,9 @@ _allocator: PagedKVAllocator | None = None
 _batch_task: asyncio.Task | None = None
 _backend: Any | None = None
 _backend_name = os.getenv("PHASE2_BACKEND", "synthetic").strip().lower()
+# Fix 10: guards against concurrent model loads when multiple requests arrive
+# before the first _get_backend() call completes.
+_backend_lock = threading.Lock()
 
 
 class TransformersBackend:
@@ -516,15 +520,19 @@ def _get_backend() -> TransformersBackend | None:
         return None
     if _backend_name != "transformers":
         raise RuntimeError("PHASE2_BACKEND must be one of: synthetic, transformers")
-    if _backend is None:
-        _backend = TransformersBackend()
-        total_blocks = _env_int("KV_TOTAL_BLOCKS", 4096, min_val=1)
-        block_size_tokens = _env_int("KV_BLOCK_SIZE_TOKENS", 16, min_val=1)
-        _allocator = PagedKVAllocator(
-            total_blocks=total_blocks,
-            block_size_tokens=block_size_tokens,
-            bytes_per_token=int(_backend.bytes_per_token),
-        )
+    if _backend is not None:
+        return _backend
+    with _backend_lock:
+        if _backend is None:
+            b = TransformersBackend()
+            total_blocks = _env_int("KV_TOTAL_BLOCKS", 4096, min_val=1)
+            block_size_tokens = _env_int("KV_BLOCK_SIZE_TOKENS", 16, min_val=1)
+            _allocator = PagedKVAllocator(
+                total_blocks=total_blocks,
+                block_size_tokens=block_size_tokens,
+                bytes_per_token=int(b.bytes_per_token),
+            )
+            _backend = b
     return _backend
 
 
