@@ -44,11 +44,13 @@ if [[ -d "${VENV_DIR}" && "${USE_VENV}" -eq 1 ]]; then
   PYTHON_BIN="python"
   python -m pip install -q --upgrade pip
   python -m pip install -q -r bench/harness/requirements.txt
-  python -m pip install -q "vllm==${VLLM_VERSION}" "transformers==4.51.3" "tokenizers==0.21.1"
+  # Let vLLM resolve compatible transformers/tokenizers for the pinned vLLM version.
+  python -m pip install -q "vllm==${VLLM_VERSION}"
 else
   "${PYTHON_BIN}" -m pip install -q --user --break-system-packages --upgrade pip
   "${PYTHON_BIN}" -m pip install -q --user --break-system-packages -r bench/harness/requirements.txt
-  "${PYTHON_BIN}" -m pip install -q --user --break-system-packages "vllm==${VLLM_VERSION}" "transformers==4.51.3" "tokenizers==0.21.1"
+  # Let vLLM resolve compatible transformers/tokenizers for the pinned vLLM version.
+  "${PYTHON_BIN}" -m pip install -q --user --break-system-packages "vllm==${VLLM_VERSION}"
   export PATH="$HOME/.local/bin:$PATH"
   PYTHON_BIN="${PYTHON_BIN}"
 fi

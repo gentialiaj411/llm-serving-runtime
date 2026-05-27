@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -53,18 +54,30 @@ class FakeAsyncClient:
 
 class CoordinatorServerTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._old_db_path = coord.DURABLE_DB_PATH
+        coord.DURABLE_DB_PATH = str(Path(self._tmpdir.name) / "coordinator_state.db")
         coord._workers.clear()
         coord._active.clear()
         coord._completed_cache.clear()
         coord._cancelled.clear()
         coord._pending_recovery.clear()
+        coord._tenant_inflight.clear()
+        coord._tenant_limits = {"default": 16}
+        coord._tenant_weights = {"default": 1.0}
+        coord._admission_limit = 64
+        coord._admission_wait_timeout_ms = 200
+        coord._default_deadline_ms = 120000
 
     def tearDown(self) -> None:
+        coord.DURABLE_DB_PATH = self._old_db_path
+        self._tmpdir.cleanup()
         coord._workers.clear()
         coord._active.clear()
         coord._completed_cache.clear()
         coord._cancelled.clear()
         coord._pending_recovery.clear()
+        coord._tenant_inflight.clear()
         coord._ttft_ms_samples.clear()
         coord._metrics.update(
             {
@@ -73,6 +86,11 @@ class CoordinatorServerTests(unittest.TestCase):
                 "nonstream_requests_total": 0,
                 "retry_attempts_total": 0,
                 "cancellations_total": 0,
+                "tenant_rejections_total": 0,
+                "admission_rejections_total": 0,
+                "worker_transport_failures_total": 0,
+                "worker_stream_transport_failures_total": 0,
+                "request_timeouts_total": 0,
             }
         )
 
@@ -110,10 +128,12 @@ class CoordinatorServerTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
-                ("POST", "http://worker-a/generate", {"request_id": "req-1", "prompt": "hello", "max_tokens": 4, "temperature": 0.0, "deadline_unix_ms": None}),
-                ("POST", "http://worker-b/generate", {"request_id": "req-1", "prompt": "hello", "max_tokens": 4, "temperature": 0.0, "deadline_unix_ms": None}),
+                ("POST", "http://worker-a/generate", {"request_id": "req-1", "prompt": "hello", "max_tokens": 4, "temperature": 0.0, "deadline_unix_ms": unittest.mock.ANY, "prefill_handoff_id": None}),
+                ("POST", "http://worker-b/generate", {"request_id": "req-1", "prompt": "hello", "max_tokens": 4, "temperature": 0.0, "deadline_unix_ms": unittest.mock.ANY, "prefill_handoff_id": None}),
             ],
         )
+        first_deadline = calls[0][2]["deadline_unix_ms"] if calls[0][2] else None
+        self.assertIsInstance(first_deadline, int)
 
     def test_cancel_forwards_to_active_worker_and_marks_request(self) -> None:
         coord._mark_active("req-cancel", "http://worker-a")
@@ -198,6 +218,10 @@ class CoordinatorServerTests(unittest.TestCase):
         self.assertEqual(result["nonstream_requests_total"], 1)
         self.assertEqual(result["retry_attempts_total"], 4)
         self.assertEqual(result["cancellations_total"], 5)
+        self.assertEqual(result["admission_rejections_total"], 0)
+        self.assertEqual(result["worker_transport_failures_total"], 0)
+        self.assertEqual(result["worker_stream_transport_failures_total"], 0)
+        self.assertEqual(result["request_timeouts_total"], 0)
         self.assertEqual(result["current_inflight_requests"], 1)
         self.assertEqual(result["workers_inflight_total"], 3)
         self.assertEqual(result["ttft_sample_count"], 3)
@@ -232,6 +256,131 @@ class CoordinatorServerTests(unittest.TestCase):
             )
 
         self.assertEqual(exc.exception.status_code, 499)
+
+    def test_choose_worker_filters_by_role(self) -> None:
+        coord._workers.extend(
+            [
+                coord.WorkerState(url="http://prefill-a", role="prefill", healthy=True, inflight=0),
+                coord.WorkerState(url="http://decode-a", role="decode", healthy=True, inflight=1),
+                coord.WorkerState(url="http://decode-b", role="decode", healthy=True, inflight=0),
+            ]
+        )
+        chosen = coord._choose_worker(role="decode", tenant_key="m1")
+        self.assertEqual(chosen.url, "http://decode-b")
+
+    def test_nonstream_prefill_decode_routes_to_decode_worker(self) -> None:
+        coord._workers.extend(
+            [
+                coord.WorkerState(url="http://prefill-a", role="prefill", healthy=True, inflight=0),
+                coord.WorkerState(url="http://decode-a", role="decode", healthy=True, inflight=0),
+            ]
+        )
+        calls: list[tuple[str, str, dict | None]] = []
+        script = [
+            FakeResponse({"prefill_handoff_id": "hid-1"}),
+            FakeResponse({"request_id": "req-pd", "text": "decoded", "cancelled": False}),
+        ]
+
+        with patch.object(coord.httpx, "AsyncClient", lambda timeout=None: FakeAsyncClient(script, calls)):
+            with patch.object(coord, "_append_log", lambda event: None):
+                result = asyncio.run(
+                    coord.chat_completions(
+                        coord.ChatRequest(
+                            model="test-model",
+                            messages=[coord.Message(role="user", content="hello world")],
+                            max_tokens=4,
+                            temperature=0.0,
+                            stream=False,
+                            request_id="req-pd",
+                        )
+                    )
+                )
+
+        self.assertEqual(result["choices"][0]["message"]["content"], "decoded")
+        self.assertEqual(calls[0][1], "http://prefill-a/prefill")
+        self.assertEqual(calls[1][1], "http://decode-a/generate")
+        self.assertEqual(calls[1][2]["prefill_handoff_id"], "hid-1")
+        self.assertEqual(coord._workers[0].inflight, 0)
+        self.assertEqual(coord._workers[1].inflight, 0)
+
+    def test_metrics_exposes_scheduler_and_autoscale_fields(self) -> None:
+        result = asyncio.run(coord.metrics())
+        self.assertIn("scheduler_policy", result)
+        self.assertIn("autoscale_admission_limit", result)
+        self.assertIn("tenant_limits", result)
+        self.assertIn("tenant_weights", result)
+
+    def test_admission_rejects_when_tenant_limit_reached(self) -> None:
+        coord._workers.append(coord.WorkerState(url="http://worker-a", role="decode", healthy=True, inflight=0))
+        coord._tenant_limits = {"default": 1}
+        coord._tenant_inflight["default"] = 1
+        with self.assertRaises(HTTPException) as exc:
+            asyncio.run(
+                coord.chat_completions(
+                    coord.ChatRequest(
+                        model="test-model",
+                        messages=[coord.Message(role="user", content="hello")],
+                        request_id="req-tenant-limit",
+                    )
+                )
+            )
+        self.assertEqual(exc.exception.status_code, 429)
+
+    def test_admission_waits_for_capacity_instead_of_immediate_reject(self) -> None:
+        coord._workers.append(coord.WorkerState(url="http://worker-a", role="decode", healthy=True, inflight=0))
+        coord._admission_limit = 1
+        coord._admission_wait_timeout_ms = 250
+        coord._mark_active("existing", "http://worker-a")
+        calls: list[tuple[str, str, dict | None]] = []
+        script = [FakeResponse({"request_id": "req-q", "text": "ok", "cancelled": False})]
+
+        async def clear_slot() -> None:
+            await asyncio.sleep(0.05)
+            coord._active.pop("existing", None)
+
+        async def run_test() -> dict[str, object]:
+            asyncio.create_task(clear_slot())
+            with patch.object(coord.httpx, "AsyncClient", lambda timeout=None: FakeAsyncClient(script, calls)):
+                with patch.object(coord, "_append_log", lambda event: None):
+                    return await coord.chat_completions(
+                        coord.ChatRequest(
+                            model="test-model",
+                            messages=[coord.Message(role="user", content="hello")],
+                            max_tokens=4,
+                            temperature=0.0,
+                            stream=False,
+                            request_id="req-q",
+                        )
+                    )
+
+        result = asyncio.run(run_test())
+        self.assertEqual(result["choices"][0]["message"]["content"], "ok")
+        self.assertEqual(coord._metrics["admission_rejections_total"], 0)
+
+    def test_load_recovery_state_reads_durable_db(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "coord.db"
+            conn = sqlite3.connect(str(db_path))
+            try:
+                conn.execute(
+                    "CREATE TABLE request_state (request_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, status TEXT NOT NULL, updated_unix_ms INTEGER NOT NULL, response_json TEXT)"
+                )
+                conn.execute(
+                    "INSERT INTO request_state VALUES (?, ?, ?, ?, ?)",
+                    ("req-db-done", "default", "completed", int(time.time() * 1000), json.dumps({"request_id": "req-db-done", "text": "done"})),
+                )
+                conn.execute(
+                    "INSERT INTO request_state VALUES (?, ?, ?, ?, ?)",
+                    ("req-db-pending", "default", "admitted", int(time.time() * 1000), None),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            with patch.object(coord, "DURABLE_DB_PATH", str(db_path)):
+                coord._load_recovery_state()
+
+        self.assertEqual(coord._pending_recovery, {"req-db-pending"})
+        self.assertEqual(coord._get_completion("req-db-done"), {"request_id": "req-db-done", "text": "done"})
 
 
 if __name__ == "__main__":

@@ -3,3 +3,4 @@
 # Optional real-inference Phase 1 backend.
 transformers==5.8.1
 torch==2.11.0
+peft>=0.13.0
