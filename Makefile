@@ -1,6 +1,6 @@
 PYTHON ?= python
 
-.PHONY: benchmark-final dashboard-snapshot enforce-slos resume-evidence
+.PHONY: benchmark-final dashboard-snapshot enforce-slos
 
 benchmark-final:
 	$(PYTHON) scripts/run_final_benchmark.py
@@ -11,5 +11,3 @@ dashboard-snapshot:
 enforce-slos:
 	$(PYTHON) bench/scripts/enforce_slos.py --csv bench/results/runtime-final-local.csv
 
-resume-evidence:
-	$(PYTHON) bench/scripts/resume_evidence.py
