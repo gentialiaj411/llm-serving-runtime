@@ -13,3 +13,24 @@ bench/results/codex-runtime-smoke-*.manifest.json
 bench/results/codex-phase2-smoke-*.csv
 bench/results/codex-phase2-smoke-*.manifest.json
 bench/results/codex-chaos-smoke-*.json
+
+# --- agent/session scaffolding (not part of the project) ---
+.claude/
+.claudeignore
+context/
+AGENTS.md
+PROJECT_CONTEXT.md
+PROJECT_STATE.md
+NEXT_TASK.md
+PATH_TO_S_PLUS.md
+RESUME_CLAIMS.md
+improvement_plan.md
+orcaforge_upgrades.md
+
+# --- raw run logs & scratch drivers ---
+*.log
+bench/results/_overnight_logs/
+bench/scripts/_overnight_*
+bench/scripts/_fix_md_footers.sh
+bench/scripts/debug_paged_*.py
+runtime/logs/
