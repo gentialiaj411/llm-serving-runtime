@@ -24,3 +24,5 @@ bench/scripts/debug_paged_*.py
 runtime/logs/
 
 
+.venv*/
+.pytest_cache/

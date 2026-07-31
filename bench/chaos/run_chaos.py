@@ -13,7 +13,14 @@ import httpx
 
 
 def is_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
     if os.name == "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except Exception:
+            pass
         try:
             out = subprocess.check_output(
                 ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
