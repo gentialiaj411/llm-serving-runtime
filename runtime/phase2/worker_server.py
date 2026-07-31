@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from runtime.phase2.kv_allocator import PagedKVAllocator
-from runtime.phase2.paged_kv_cache import BlockPagedCache
+from runtime.phase2.paged_kv_cache import BlockPagedBatchCache, BlockPagedCache
 from runtime.phase2.paged_kv_kernel import GpuKVBlockPool
 from runtime.phase2.lora_manager import LoRAManager, load_adapter_config_from_env
 from runtime.phase2.prefix_cache import PrefixBlockCache
@@ -228,6 +228,7 @@ class TransformersBackend:
                 dtype=dtype,
                 device=device,
             )
+            self._enable_block_paged_attention()
         self.lora_enabled = os.getenv("PHASE2_LORA", "0") == "1" and quant_mode != "int4" and not self.speculative
         self.lora_manager: LoRAManager | None = None
         if self.lora_enabled:
@@ -248,6 +249,36 @@ class TransformersBackend:
         if self.torch.cuda.is_available():
             self.torch.cuda.reset_peak_memory_stats()
             _record_cuda_peak()
+
+    def _enable_block_paged_attention(self) -> None:
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+        from runtime.phase2.block_paged_attention import block_paged_attention_forward
+
+        ALL_ATTENTION_FUNCTIONS.register("block_paged", block_paged_attention_forward)
+        self.model.config._attn_implementation = "block_paged"
+        self._warmup_paged_attention_kernel()
+
+    def _warmup_paged_attention_kernel(self) -> None:
+        if self.kv_pool is None or self.kv_backend != "paged":
+            return
+        from runtime.phase2.paged_attention_triton import triton_available, warmup_paged_attention_kernel
+
+        if not triton_available() or not self.torch.cuda.is_available():
+            return
+        config = self.model.config
+        n_attn_heads = int(getattr(config, "num_attention_heads", getattr(config, "n_head", 1)))
+        n_kv_heads = int(getattr(config, "num_key_value_heads", n_attn_heads))
+        hidden_size = int(getattr(config, "hidden_size", getattr(config, "n_embd", n_attn_heads)))
+        head_dim = hidden_size // max(1, n_attn_heads)
+        num_kv_groups = max(1, n_attn_heads // max(1, n_kv_heads))
+        warmup_paged_attention_kernel(
+            self.kv_pool,
+            num_heads=n_attn_heads,
+            num_kv_groups=num_kv_groups,
+            head_dim=head_dim,
+            block_ids=[0],
+        )
 
     def _bytes_per_token(self) -> int:
         config = self.model.config
@@ -300,9 +331,11 @@ class TransformersBackend:
         return base + generated
 
     def init_state(self, state: ActiveState) -> None:
-        encoded = self.tokenizer(state.req.prompt or "hello", return_tensors="pt")
-        state.input_ids = encoded["input_ids"].to(self.device)
-        attention_mask = encoded.get("attention_mask")
+        encoded = None
+        if state.input_ids is None:
+            encoded = self.tokenizer(state.req.prompt or "hello", return_tensors="pt")
+            state.input_ids = encoded["input_ids"].to(self.device)
+        attention_mask = encoded.get("attention_mask") if encoded is not None else state.attention_mask
         state.attention_mask = attention_mask.to(self.device) if attention_mask is not None else None
         state.generated_token_ids = []
 
@@ -385,6 +418,157 @@ class TransformersBackend:
         except TypeError:
             return DynamicCache(past_key_values)
 
+    def _concat_paged_caches(self, states: list[ActiveState]) -> BlockPagedBatchCache:
+        if self.kv_pool is None:
+            raise RuntimeError("paged concat requires GpuKVBlockPool")
+        caches = [state.past_key_values for state in states]
+        if not all(isinstance(c, BlockPagedCache) for c in caches):
+            raise TypeError("paged batch decode requires BlockPagedCache per request")
+        return BlockPagedBatchCache.from_caches(caches, self.kv_pool)
+
+    def _split_paged_batch_cache(
+        self, batch: BlockPagedBatchCache, states: list[ActiveState]
+    ) -> None:
+        for idx, state in enumerate(states):
+            state.past_key_values = batch.extract_cache(idx)
+
+    def _paged_prefill_groups(self, states: list[ActiveState]) -> dict[str, str]:
+        """Prefill unprefilled rows; emit first token from prefill logits."""
+        emitted: dict[str, str] = {}
+        if not states:
+            return emitted
+
+        prefill_groups: dict[int, list[ActiveState]] = collections.defaultdict(list)
+        for state in states:
+            assert state.input_ids is not None
+            prefill_groups[int(state.input_ids.shape[1])].append(state)
+
+        with self.torch.no_grad():
+            for group in prefill_groups.values():
+                input_ids = self.torch.cat([state.input_ids for state in group], dim=0)
+                attention_mask = None
+                if all(state.attention_mask is not None for state in group):
+                    attention_mask = self.torch.cat([state.attention_mask for state in group], dim=0)
+                if len(group) == 1:
+                    past = group[0].past_key_values
+                else:
+                    past = self._concat_paged_caches(group)
+                outputs = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    past_key_values=past,
+                    use_cache=True,
+                )
+                if isinstance(outputs.past_key_values, BlockPagedBatchCache):
+                    batch_cache = outputs.past_key_values
+                    past_values = [batch_cache.extract_cache(i) for i in range(len(group))]
+                elif len(group) == 1:
+                    past_values = [self._normalize_past_key_values(outputs.past_key_values)]
+                else:
+                    raise TypeError("expected BlockPagedBatchCache from batched paged prefill")
+                logits = outputs.logits[:, -1, :]
+                for idx, state in enumerate(group):
+                    state.past_key_values = past_values[idx]
+                    state.prompt_prefilled = True
+                    next_id = int(logits.argmax(dim=-1).tolist()[idx])
+                    state.last_token_id = next_id
+                    assert state.generated_token_ids is not None
+                    state.generated_token_ids.append(next_id)
+                    emitted[state.req.request_id] = self.tokenizer.decode([next_id], skip_special_tokens=True)
+        return emitted
+
+    def _paged_decode_step(
+        self,
+        decode_states: list[ActiveState],
+        batch_cache: BlockPagedBatchCache | None,
+    ) -> tuple[dict[str, str], BlockPagedBatchCache | None]:
+        """One ragged batched decode forward over all rows (per-row seq_lens in the kernel)."""
+        emitted: dict[str, str] = {}
+        input_ids = self.torch.tensor([[state.last_token_id] for state in decode_states], device=self.device)
+
+        with self.torch.no_grad():
+            if len(decode_states) == 1:
+                state = decode_states[0]
+                outputs = self.model(
+                    input_ids=input_ids,
+                    past_key_values=state.past_key_values,
+                    use_cache=True,
+                )
+                state.past_key_values = self._normalize_past_key_values(outputs.past_key_values)
+            else:
+                if batch_cache is None or batch_cache._batch_size != len(decode_states):
+                    batch_cache = self._concat_paged_caches(decode_states)
+                outputs = self.model(
+                    input_ids=input_ids,
+                    past_key_values=batch_cache,
+                    use_cache=True,
+                )
+                if isinstance(outputs.past_key_values, BlockPagedBatchCache):
+                    batch_cache = outputs.past_key_values
+
+            logits = outputs.logits[:, -1, :]
+            next_ids = logits.argmax(dim=-1).tolist()
+            for idx, state in enumerate(decode_states):
+                next_id = int(next_ids[idx])
+                state.last_token_id = next_id
+                assert state.generated_token_ids is not None
+                state.generated_token_ids.append(next_id)
+                emitted[state.req.request_id] = self.tokenizer.decode([next_id], skip_special_tokens=True)
+
+        return emitted, batch_cache
+
+    def _paged_next_tokens_batch_for_adapter(
+        self, states: list[ActiveState], max_tokens: int
+    ) -> dict[str, list[str]]:
+        """Multi-step paged decode with one live BlockPagedBatchCache across all steps."""
+        emitted: dict[str, list[str]] = {state.req.request_id: [] for state in states}
+        if max_tokens <= 0 or not states:
+            return emitted
+
+        batch_cache: BlockPagedBatchCache | None = None
+
+        for _step in range(max_tokens):
+            just_prefilled: set[str] = set()
+            unprefilled = [state for state in states if not state.prompt_prefilled]
+            if unprefilled:
+                for rid, token in self._paged_prefill_groups(unprefilled).items():
+                    emitted[rid].append(token)
+                    just_prefilled.add(rid)
+                batch_cache = None
+
+            decode_states = [
+                state
+                for state in states
+                if state.prompt_prefilled and state.req.request_id not in just_prefilled
+            ]
+            if not decode_states:
+                continue
+
+            step_emitted, batch_cache = self._paged_decode_step(decode_states, batch_cache)
+            for rid, token in step_emitted.items():
+                emitted[rid].append(token)
+
+        if batch_cache is not None:
+            decode_states = [state for state in states if state.prompt_prefilled]
+            if len(decode_states) > 1:
+                self._split_paged_batch_cache(batch_cache, decode_states)
+
+        return emitted
+
+    def _paged_next_tokens_batch(
+        self, states: list[ActiveState], max_tokens: int
+    ) -> dict[str, list[str]]:
+        emitted: dict[str, list[str]] = {state.req.request_id: [] for state in states}
+        by_adapter: dict[str, list[ActiveState]] = collections.defaultdict(list)
+        for state in states:
+            by_adapter[state.req.adapter or "base"].append(state)
+        for adapter, adapter_states in by_adapter.items():
+            self.set_active_adapter(adapter)
+            partial = self._paged_next_tokens_batch_for_adapter(adapter_states, max_tokens)
+            for rid, tokens in partial.items():
+                emitted[rid].extend(tokens)
+        return emitted
+
     def _concat_past_key_values(self, states: list[ActiveState]) -> Any:
         first = states[0].past_key_values
         if first is None:
@@ -439,6 +623,10 @@ class TransformersBackend:
         return emitted
 
     def _next_token_batch_for_adapter(self, states: list[ActiveState]) -> dict[str, str]:
+        if self.kv_backend == "paged":
+            step_lists = self._paged_next_tokens_batch_for_adapter(states, 1)
+            return {rid: tokens[0] for rid, tokens in step_lists.items() if tokens}
+
         emitted: dict[str, str] = {}
 
         prefill_groups: dict[int, list[ActiveState]] = collections.defaultdict(list)
@@ -456,13 +644,18 @@ class TransformersBackend:
                 attention_mask = None
                 if all(state.attention_mask is not None for state in group):
                     attention_mask = self.torch.cat([state.attention_mask for state in group], dim=0)
-                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=True)
+                outputs = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    past_key_values=None,
+                    use_cache=True,
+                )
                 past_values = self._split_past_key_values(outputs.past_key_values, len(group))
                 logits = outputs.logits[:, -1, :]
                 for idx, state in enumerate(group):
                     state.past_key_values = past_values[idx]
                     state.prompt_prefilled = True
-                    next_id = int(logits[idx].argmax(dim=-1).item())
+                    next_id = int(logits.argmax(dim=-1).tolist()[idx])
                     state.last_token_id = next_id
                     assert state.generated_token_ids is not None
                     state.generated_token_ids.append(next_id)
@@ -470,16 +663,17 @@ class TransformersBackend:
 
             for group in decode_groups.values():
                 input_ids = self.torch.tensor([[state.last_token_id] for state in group], device=self.device)
+                past = self._concat_past_key_values(group)
                 outputs = self.model(
                     input_ids=input_ids,
-                    past_key_values=self._concat_past_key_values(group),
+                    past_key_values=past,
                     use_cache=True,
                 )
                 past_values = self._split_past_key_values(outputs.past_key_values, len(group))
                 logits = outputs.logits[:, -1, :]
                 for idx, state in enumerate(group):
-                    next_id = int(logits[idx].argmax(dim=-1).item())
                     state.past_key_values = past_values[idx]
+                    next_id = int(logits.argmax(dim=-1).tolist()[idx])
                     state.last_token_id = next_id
                     assert state.generated_token_ids is not None
                     state.generated_token_ids.append(next_id)
@@ -488,70 +682,22 @@ class TransformersBackend:
         return emitted
 
     def next_tokens_batch(self, states: list[ActiveState], max_tokens: int) -> dict[str, list[str]]:
+        if self.kv_backend == "paged":
+            return self._paged_next_tokens_batch(states, max_tokens)
         if self.speculative or max_tokens <= 1:
             return {rid: [token] for rid, token in self.next_token_batch(states).items()}
         if not states:
             return {}
 
-        prefixes = []
-        lengths = []
-        for state in states:
-            assert state.input_ids is not None
-            assert state.generated_token_ids is not None
-            prefix = state.input_ids
-            if state.generated_token_ids:
-                generated = self.torch.tensor([state.generated_token_ids], device=self.device)
-                prefix = self.torch.cat([prefix, generated], dim=1)
-            prefixes.append(prefix)
-            lengths.append(int(prefix.shape[1]))
-
-        pad_id = self.tokenizer.pad_token_id
-        if pad_id is None:
-            pad_id = self.tokenizer.eos_token_id
-        if pad_id is None:
-            pad_id = 0
-
-        max_len = max(lengths)
-        padded = []
-        masks = []
-        for prefix, length in zip(prefixes, lengths):
-            pad = max_len - length
-            if pad:
-                pad_tensor = self.torch.full((1, pad), int(pad_id), dtype=prefix.dtype, device=self.device)
-                prefix = self.torch.cat([prefix, pad_tensor], dim=1)
-            padded.append(prefix)
-            masks.append(
-                self.torch.cat(
-                    [
-                        self.torch.ones((1, length), dtype=self.torch.long, device=self.device),
-                        self.torch.zeros((1, pad), dtype=self.torch.long, device=self.device),
-                    ],
-                    dim=1,
-                )
-            )
-
-        with self.torch.no_grad():
-            input_ids = self.torch.cat(padded, dim=0)
-            attention_mask = self.torch.cat(masks, dim=0)
-            outputs = self.model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                max_new_tokens=max_tokens,
-                do_sample=False,
-                pad_token_id=int(pad_id),
-            )
-
-        result: dict[str, list[str]] = {}
-        for idx, state in enumerate(states):
-            token_ids = [int(token_id) for token_id in outputs[idx, max_len : max_len + max_tokens].tolist()]
-            state.prompt_prefilled = False
-            state.past_key_values = None
-            state.next_logits = None
-            state.generated_token_ids.extend(token_ids)
-            state.last_token_id = token_ids[-1] if token_ids else state.last_token_id
-            result[state.req.request_id] = [
-                self.tokenizer.decode([token_id], skip_special_tokens=True) for token_id in token_ids
-            ]
+        # Keep the model KV state alive. This is intentionally iterative: the old
+        # generate() path rebuilt padded prefixes and discarded the cache each call.
+        result: dict[str, list[str]] = {state.req.request_id: [] for state in states}
+        for _ in range(max_tokens):
+            step = self.next_token_batch(states)
+            if not step:
+                break
+            for rid, token in step.items():
+                result[rid].append(token)
         return result
 
     def next_token(self, state: ActiveState) -> str:
@@ -847,7 +993,7 @@ def _build_pending_stream(req: GenerateRequest, stream_queue: asyncio.Queue) -> 
 async def _continuous_batch_loop() -> None:
     # Orca-style idea: schedule at iteration boundaries, admitting new requests continuously.
     max_active = 32
-    decode_step_ms = max(1, int(os.getenv("PHASE2_DECODE_STEP_MS", "2")))
+    decode_step_ms = max(0, int(os.getenv("PHASE2_DECODE_STEP_MS", "0")))
     while True:
         # Pull at least one request if system is idle.
         if not _waiting and not _active:
@@ -972,7 +1118,7 @@ async def _continuous_batch_loop() -> None:
             continue
 
         # One decode iteration: advance every active request by one token.
-        await asyncio.sleep(decode_step_ms / 1000.0)
+        await asyncio.sleep(decode_step_ms / 1000.0 if decode_step_ms else 0)
         _scheduler_metrics["decode_iterations_total"] += 1
         now_ms = int(time.time() * 1000)
         finished_ids: list[str] = []
@@ -1010,12 +1156,20 @@ async def _continuous_batch_loop() -> None:
         backend = _get_backend()
         batched_ids: set[str] = set()
         kv_backend = getattr(backend, "kv_backend", "dynamic") if backend is not None else "dynamic"
-        if backend is not None and ready and not getattr(backend, "speculative", False) and kv_backend in {"dynamic"}:
+        if backend is not None and ready and not getattr(backend, "speculative", False) and kv_backend in {"dynamic", "paged"}:
             _scheduler_metrics["continuous_batches_total"] += 1
             _scheduler_metrics["batched_requests_total"] += len(ready)
             try:
                 batch_steps = max(1, int(os.getenv("PHASE2_BATCH_DECODE_STEPS", "16")))
                 batch_steps = min(batch_steps, *(state.req.max_tokens - len(state.generated) for state in ready))
+                if kv_backend == "paged" and _allocator is not None:
+                    for state in ready:
+                        rid = state.req.request_id
+                        needed = backend.occupied_tokens(state) + batch_steps
+                        alloc = _allocator.allocate_for_tokens(rid, needed)
+                        if alloc is None:
+                            raise RuntimeError(f"paged KV allocation failed for {rid} ({needed} tokens)")
+                        backend.sync_kv_blocks(state, alloc.block_ids)
                 batch_token_lists = backend.next_tokens_batch(ready, batch_steps)
                 for state in ready:
                     rid = state.req.request_id
