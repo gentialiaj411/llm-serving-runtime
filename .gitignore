@@ -34,3 +34,7 @@ bench/scripts/_overnight_*
 bench/scripts/_fix_md_footers.sh
 bench/scripts/debug_paged_*.py
 runtime/logs/
+
+# --- resume-framed smoke artifacts (tiny-gpt2, no evidentiary value) ---
+bench/results/resume-evidence-*
+bench/scripts/resume_evidence.py

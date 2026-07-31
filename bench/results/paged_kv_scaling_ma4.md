@@ -1,19 +1,19 @@
 # Paged KV — measured GPU memory (Qwen2-1.5B)
 
-- Run UTC: `2026-06-16T02:42:21.683259+00:00`
+- Run UTC: `2026-06-16T02:15:34.574334+00:00`
 - Model: `Qwen/Qwen2-1.5B-Instruct`
 - GPU: `NVIDIA GeForce RTX 5070 Laptop GPU`
-- Workload: `32` requests, variable prompt/output (seed `5070`), max_active `8`
+- Workload: `32` requests, variable prompt/output (seed `5070`), max_active `4`
 
 ## Peak memory
 
 | Path | torch.cuda.max_memory_allocated (MB) | nvidia-smi peak used (MB) | tokens/sec |
 |------|--------------------------------------|---------------------------|------------|
-| Contiguous (`PHASE2_KV_BACKEND=reserved`) | 3373.6 | 4859.0 | 19.61 |
-| Paged kernel (`PHASE2_KV_BACKEND=paged`) | 4224.2 | 5855.0 | 4.12 |
+| Contiguous (`PHASE2_KV_BACKEND=reserved`) | 3299.0 | 4729.0 | 18.40 |
+| Paged kernel (`PHASE2_KV_BACKEND=paged`) | 4176.3 | 5684.0 | 5.66 |
 
-- Paged peak memory (PyTorch peak): **+25.21% higher** vs contiguous (`paged_vs_contiguous_torch_peak_delta_percent`; positive = paged uses more memory)
-- Paged peak memory (nvidia-smi peak): **+20.50% higher** vs contiguous (`paged_vs_contiguous_nvidia_smi_peak_delta_percent`; positive = paged uses more memory)
+- Paged peak memory (PyTorch peak): **+26.59% higher** vs contiguous (`paged_vs_contiguous_torch_peak_delta_percent`; positive = paged uses more memory)
+- Paged peak memory (nvidia-smi peak): **+20.19% higher** vs contiguous (`paged_vs_contiguous_nvidia_smi_peak_delta_percent`; positive = paged uses more memory)
 ## Which memory metric to headline
 
 **Headline metric:** logical KV efficiency and concurrency
@@ -40,8 +40,6 @@ lower on both at moderate concurrency:
   nvidia-smi median ~5444 MB vs contiguous ~4797 MB on this workload.
 
 Throughput: see `bench/results/paged_kv_repeat.json` (contiguous median 19.91 tok/s; paged median 3.20 tok/s — check per-run `success_rate` before comparing paged).
-## Notes
-
 - Contiguous baseline uses explicit worst-case GPU KV reservation (`PHASE2_KV_BACKEND=reserved`) plus `StaticCache` for decode.
 - Paged path uses `GpuKVBlockPool` + `BlockPagedCache` with `PagedKVAllocator` block admission/free.
 - Supersedes modeled-only claim in `bench/results/kv-pressure.json` (see `CLAIMS_MATRIX.md`).

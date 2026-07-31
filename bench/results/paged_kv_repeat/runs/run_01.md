@@ -16,7 +16,7 @@
 - Paged peak memory (nvidia-smi peak): **+19.93% higher** vs contiguous (`paged_vs_contiguous_nvidia_smi_peak_delta_percent`; positive = paged uses more memory)
 ## Which memory metric to headline
 
-**Headline for resume / external claims:** logical KV efficiency and concurrency
+**Headline metric:** logical KV efficiency and concurrency
 under fixed block budget (`bench/results/paged_kv_concurrency_scale.json`).
 Use **`paged_kv_pool_peak_bytes`** from worker `/metrics` for KV-specific bytes.
 
