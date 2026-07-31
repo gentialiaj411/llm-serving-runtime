@@ -1,0 +1,8 @@
+{
+  "run_id": "paged-kv-concurrency-scale",
+  "timestamp_utc": "2026-06-16T03:53:45.080329+00:00",
+  "system_under_test": "phase2",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "rows": 6,
+  "gpu_count": 1
+}

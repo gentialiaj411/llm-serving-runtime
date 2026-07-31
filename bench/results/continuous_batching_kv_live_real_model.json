@@ -1,0 +1,93 @@
+{
+  "artifact_type": "continuous_batching_kv_live_smoke",
+  "model_name": "Qwen/Qwen2-1.5B-Instruct",
+  "model_precision": "fp16",
+  "model_device": "cuda",
+  "backend": "transformers",
+  "status": "ok",
+  "concurrency_results": [
+    {
+      "concurrency": 1,
+      "total_requests": 64,
+      "completed_requests": 64,
+      "failed_requests": 0,
+      "success_rate": 1.0,
+      "output_tokens": 4096,
+      "output_tokens_per_sec": 22.874126640883176,
+      "elapsed_sec": 179.06694599999173,
+      "non_completed_statuses": []
+    },
+    {
+      "concurrency": 4,
+      "total_requests": 64,
+      "completed_requests": 64,
+      "failed_requests": 0,
+      "success_rate": 1.0,
+      "output_tokens": 4096,
+      "output_tokens_per_sec": 44.869639096076355,
+      "elapsed_sec": 91.28667139999743,
+      "non_completed_statuses": []
+    },
+    {
+      "concurrency": 8,
+      "total_requests": 64,
+      "completed_requests": 64,
+      "failed_requests": 0,
+      "success_rate": 1.0,
+      "output_tokens": 4096,
+      "output_tokens_per_sec": 70.18778483081265,
+      "elapsed_sec": 58.35773290001089,
+      "non_completed_statuses": []
+    },
+    {
+      "concurrency": 16,
+      "total_requests": 64,
+      "completed_requests": 64,
+      "failed_requests": 0,
+      "success_rate": 1.0,
+      "output_tokens": 4096,
+      "output_tokens_per_sec": 112.36882256786517,
+      "elapsed_sec": 36.45139200000267,
+      "non_completed_statuses": []
+    },
+    {
+      "concurrency": 32,
+      "total_requests": 64,
+      "completed_requests": 64,
+      "failed_requests": 0,
+      "success_rate": 1.0,
+      "output_tokens": 4096,
+      "output_tokens_per_sec": 161.69370301044594,
+      "elapsed_sec": 25.331846100001712,
+      "non_completed_statuses": []
+    }
+  ],
+  "concurrency_16": {
+    "concurrency": 16,
+    "total_requests": 64,
+    "completed_requests": 64,
+    "failed_requests": 0,
+    "success_rate": 1.0,
+    "output_tokens": 4096,
+    "output_tokens_per_sec": 112.36882256786517,
+    "elapsed_sec": 36.45139200000267,
+    "non_completed_statuses": []
+  },
+  "allocator_block_size_tokens": 16,
+  "allocations_total": 1602,
+  "frees_total": 322,
+  "allocation_failures_total": 0,
+  "peak_kv_bytes": 440401920,
+  "peak_active_requests": 32,
+  "max_batch_size": 32,
+  "continuous_batches_total": 6040,
+  "active_requests_current": 0,
+  "active_allocations_current": 0,
+  "stream_completed_total": 321,
+  "stream_cancelled_total": 1,
+  "stream_timed_out_total": 0,
+  "request_errors_total": 0,
+  "cancellation_cleanup_ok": true,
+  "decode_step_ms": 8,
+  "note": "CPU-friendly real-transformer streaming concurrency smoke; not a vLLM comparison or production-scale throughput claim."
+}

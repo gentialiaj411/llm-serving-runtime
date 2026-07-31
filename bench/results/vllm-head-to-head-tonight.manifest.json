@@ -1,0 +1,41 @@
+{
+  "run_id": "vllm-head-to-head-tonight",
+  "timestamp_utc": "2026-06-17T01:33:21Z",
+  "system_under_test": "vllm",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "headline_vllm_version": "0.21.0",
+  "gpu_type": "rtx5070-laptop",
+  "gpu_count": 1,
+  "gpu_hour_usd": 2.5,
+  "base_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "inference_mode": "real_model_inference",
+  "gpu_metrics_valid": true,
+  "determinism": {
+    "passed": true,
+    "hash_a": "d73edaa3af8999f3b05ec33cfc5be749b20fe733532bbf170f24c51ff5ed7cc6",
+    "hash_b": "d73edaa3af8999f3b05ec33cfc5be749b20fe733532bbf170f24c51ff5ed7cc6",
+    "mode": "warn"
+  },
+  "aggregate_est_dollars_per_million_output_tokens": 2.8771734572789462,
+  "rows": 10,
+  "launch_vllm": false,
+  "warmup_requests_per_scenario": 1,
+  "scenario_file": "bench/scenarios/head_to_head_tonight.yaml",
+  "fairness_notes": {
+    "dtype": "float16",
+    "max_model_len": 2048,
+    "prefix_cache": "disabled",
+    "vllm_version": "0.21.0",
+    "failed_rows_reason": "The original 4096-token long rows cannot run honestly on TinyLlama-1.1B with vLLM max_model_len=2048; the first repaired long/mixed/chat rerun still produced HTTP 400 rows after TinyLlama chat-template tokenization exceeded 2048. Successful matched rows from this artifact are short_short and short_long at c1/c16."
+  },
+  "gpu_sampler": {
+    "enabled": true,
+    "interval_s": 0.5,
+    "samples_collected": 527
+  },
+  "metric_notes": {
+    "ttft": "Measured from request send to first streamed assistant token chunk.",
+    "inter_token_latency": "Measured as gaps between streamed assistant token chunk arrivals.",
+    "gpu": "Valid only when gpu_metrics_valid is true; otherwise CSV GPU columns are zeros from missing samples."
+  }
+}

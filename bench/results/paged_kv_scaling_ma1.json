@@ -1,0 +1,58 @@
+{
+  "timestamp_utc": "2026-06-16T02:00:24.786949+00:00",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "gpu_name": "NVIDIA GeForce RTX 5070 Laptop GPU",
+  "measurement": "measured_on_gpu",
+  "metric_notes": {
+    "paged_vs_contiguous_torch_peak_delta_percent": "100 * (paged/contiguous - 1). Positive = paged peak uses more memory than contiguous.",
+    "paged_vs_contiguous_nvidia_smi_peak_delta_percent": "100 * (paged/contiguous - 1) on nvidia-smi peak MB. Positive = paged uses more memory."
+  },
+  "evidence": {
+    "torch_peak": "torch.cuda.max_memory_allocated() after workload",
+    "nvidia_smi": "nvidia-smi --query-gpu=memory.used --format=csv -l equivalent sampling"
+  },
+  "workload": {
+    "request_count": 32,
+    "seed": 5070,
+    "max_active": 1,
+    "workload_model": "synthetic_uniform_prompt_output_with_timeout"
+  },
+  "modes": {
+    "contiguous": {
+      "kv_backend": "reserved",
+      "label": "contiguous_worst_case_reservation",
+      "request_count": 32,
+      "max_active": 1,
+      "completed_requests": 32,
+      "success_rate": 1.0,
+      "output_tokens": 2278,
+      "output_tokens_per_sec": 18.92167908038779,
+      "duration_s": 120.39100707299986,
+      "peak_torch_cuda_bytes": 3369334784,
+      "peak_torch_cuda_mb": 3213.248046875,
+      "peak_nvidia_smi_mb": 4626.0,
+      "worker_peak_kv_bytes": 140378112,
+      "paged_kv_pool_peak_bytes": 0,
+      "worker_kv_backend": "reserved"
+    },
+    "paged": {
+      "kv_backend": "paged",
+      "label": "paged_block_kernel",
+      "request_count": 32,
+      "max_active": 1,
+      "completed_requests": 32,
+      "success_rate": 1.0,
+      "output_tokens": 2278,
+      "output_tokens_per_sec": 6.549206076246391,
+      "duration_s": 347.82841973200084,
+      "peak_torch_cuda_bytes": 4259943936,
+      "peak_torch_cuda_mb": 4062.59912109375,
+      "peak_nvidia_smi_mb": 5593.0,
+      "worker_peak_kv_bytes": 140378112,
+      "paged_kv_pool_peak_bytes": 23396352,
+      "worker_kv_backend": "paged"
+    }
+  },
+  "paged_vs_contiguous_torch_peak_delta_percent": 26.432788935942074,
+  "paged_vs_contiguous_nvidia_smi_peak_delta_percent": 20.903588413316033
+}

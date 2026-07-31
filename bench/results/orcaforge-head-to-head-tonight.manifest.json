@@ -1,0 +1,40 @@
+{
+  "run_id": "orcaforge-head-to-head-tonight",
+  "timestamp_utc": "2026-06-17T04:29:00Z",
+  "system_under_test": "phase2",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "headline_vllm_version": "0.21.0",
+  "gpu_type": "rtx5070-laptop",
+  "gpu_count": 1,
+  "gpu_hour_usd": 2.5,
+  "base_url": "http://127.0.0.1:8101/v1/chat/completions",
+  "inference_mode": "real_model_inference",
+  "gpu_metrics_valid": true,
+  "determinism": {
+    "passed": true,
+    "hash_a": "6d9b628bdfdc18780c05482bbe7983d9a27faf54e55c7ef130bae05d831c9ac9",
+    "hash_b": "6d9b628bdfdc18780c05482bbe7983d9a27faf54e55c7ef130bae05d831c9ac9",
+    "mode": "strict"
+  },
+  "aggregate_est_dollars_per_million_output_tokens": 17.389328045407375,
+  "rows": 4,
+  "launch_vllm": false,
+  "warmup_requests_per_scenario": 1,
+  "scenario_file": "bench/scenarios/raw_throughput_tonight.yaml",
+  "fairness_notes": {
+    "dtype": "float16",
+    "model_max_len": 2048,
+    "prefix_cache": "disabled",
+    "matched_vllm_artifact": "bench/results/vllm-head-to-head-tonight.{csv,manifest.json}"
+  },
+  "gpu_sampler": {
+    "enabled": true,
+    "interval_s": 0.5,
+    "samples_collected": 3064
+  },
+  "metric_notes": {
+    "ttft": "Measured from request send to first streamed assistant token chunk.",
+    "inter_token_latency": "Measured as gaps between streamed assistant token chunk arrivals.",
+    "gpu": "Valid only when gpu_metrics_valid is true; otherwise CSV GPU columns are zeros from missing samples."
+  }
+}

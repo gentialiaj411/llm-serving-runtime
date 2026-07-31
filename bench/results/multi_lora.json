@@ -1,0 +1,58 @@
+{
+  "timestamp_utc": "2026-05-24T21:18:48.896933+00:00",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "request_count": 20,
+  "max_new_tokens": 24,
+  "concurrency": 4,
+  "adapter_mix": [
+    "base",
+    "adapter_a",
+    "adapter_b",
+    "adapter_c"
+  ],
+  "measurement": "measured_on_gpu",
+  "modes": {
+    "base_only": {
+      "lora_enabled": false,
+      "request_count": 20,
+      "concurrency": 4,
+      "adapter_mix": [
+        "base",
+        "adapter_a",
+        "adapter_b",
+        "adapter_c"
+      ],
+      "completed_requests": 20,
+      "success_rate": 1.0,
+      "output_tokens": 480,
+      "output_tokens_per_sec": 20.645184821394956,
+      "duration_s": 23.249973499998305,
+      "lora_adapter_swaps_total": 0,
+      "lora_adapters": []
+    },
+    "multi_lora": {
+      "lora_enabled": true,
+      "request_count": 20,
+      "concurrency": 4,
+      "adapter_mix": [
+        "base",
+        "adapter_a",
+        "adapter_b",
+        "adapter_c"
+      ],
+      "completed_requests": 20,
+      "success_rate": 1.0,
+      "output_tokens": 480,
+      "output_tokens_per_sec": 15.492243875881158,
+      "duration_s": 30.983245800001896,
+      "lora_adapter_swaps_total": 0,
+      "lora_adapters": [
+        "base",
+        "adapter_a",
+        "adapter_b",
+        "adapter_c"
+      ]
+    }
+  },
+  "throughput_delta_percent": -24.959529256302503
+}

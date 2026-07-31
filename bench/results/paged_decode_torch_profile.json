@@ -1,0 +1,223 @@
+{
+  "timestamp_utc": "2026-06-16T03:36:18.763284+00:00",
+  "tool": "torch.profiler",
+  "reason_ncu_unavailable": "ncu not in PATH on WSL",
+  "gpu_name": "NVIDIA GeForce RTX 5070 Laptop GPU",
+  "triton_available": true,
+  "decode_tokens_profiled": 8,
+  "summary": {
+    "decode_loop_cpu_us": 734943.805,
+    "decode_loop_cuda_us": 223554.68999999587,
+    "next_token_cpu_us_per_call": 91713.97075,
+    "next_token_cuda_us_per_call": 27944.336249999484,
+    "cudaLaunchKernel_cpu_us_total": 136082.4770000018,
+    "top_events_by_time": [
+      {
+        "name": "decode_loop_8_tokens",
+        "cpu_time_us": 734943.805,
+        "cuda_time_us": 223554.68999999587,
+        "cpu_time_total_str": "734.944ms",
+        "cuda_time_total_str": "223.555ms",
+        "count": 1
+      },
+      {
+        "name": "next_token",
+        "cpu_time_us": 733711.766,
+        "cuda_time_us": 223554.68999999587,
+        "cpu_time_total_str": "733.712ms",
+        "cuda_time_total_str": "223.555ms",
+        "count": 8
+      },
+      {
+        "name": "next_token",
+        "cpu_time_us": 0,
+        "cuda_time_us": 730506.553,
+        "cpu_time_total_str": "0.000us",
+        "cuda_time_total_str": "730.507ms",
+        "count": 8
+      },
+      {
+        "name": "aten::linear",
+        "cpu_time_us": 93923.36999999997,
+        "cuda_time_us": 208917.6639999973,
+        "cpu_time_total_str": "93.923ms",
+        "cuda_time_total_str": "208.918ms",
+        "count": 1576
+      },
+      {
+        "name": "aten::matmul",
+        "cpu_time_us": 43772.027,
+        "cuda_time_us": 197108.1179999997,
+        "cpu_time_total_str": "43.772ms",
+        "cuda_time_total_str": "197.108ms",
+        "count": 912
+      },
+      {
+        "name": "aten::mm",
+        "cpu_time_us": 33944.07600000051,
+        "cuda_time_us": 197099.12599999973,
+        "cpu_time_total_str": "33.944ms",
+        "cuda_time_total_str": "197.099ms",
+        "count": 904
+      },
+      {
+        "name": "cudaLaunchKernel",
+        "cpu_time_us": 131749.90500000218,
+        "cuda_time_us": 0,
+        "cpu_time_total_str": "131.750ms",
+        "cuda_time_total_str": "0.000us",
+        "count": 11120
+      },
+      {
+        "name": "void gemv2T_kernel_val<int, int, float, float, float, float, 128, 16, 4, 4, false, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>, float, float)",
+        "cpu_time_us": 0,
+        "cuda_time_us": 107781.55799999891,
+        "cpu_time_total_str": "0.000us",
+        "cuda_time_total_str": "107.782ms",
+        "count": 232
+      },
+      {
+        "name": "aten::to",
+        "cpu_time_us": 102064.20800000071,
+        "cuda_time_us": 1120.4319999983963,
+        "cpu_time_total_str": "102.064ms",
+        "cuda_time_total_str": "1.120ms",
+        "count": 3448
+      },
+      {
+        "name": "cudaStreamSynchronize",
+        "cpu_time_us": 98560.03199999861,
+        "cuda_time_us": 0,
+        "cpu_time_total_str": "98.560ms",
+        "cuda_time_total_str": "0.000us",
+        "count": 1360
+      },
+      {
+        "name": "aten::_to_copy",
+        "cpu_time_us": 97413.5109999988,
+        "cuda_time_us": 1120.4319999983963,
+        "cpu_time_total_str": "97.414ms",
+        "cuda_time_total_str": "1.120ms",
+        "count": 1360
+      },
+      {
+        "name": "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int, float, float, float, float, false, true, true, false, 5, false, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float> >(cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float const>, cublasGemvTensorStridedBatched<float>, float>)",
+        "cpu_time_us": 0,
+        "cuda_time_us": 89317.56800000081,
+        "cpu_time_total_str": "0.000us",
+        "cuda_time_total_str": "89.318ms",
+        "count": 672
+      },
+      {
+        "name": "aten::copy_",
+        "cpu_time_us": 85631.03100000054,
+        "cuda_time_us": 1120.4319999983963,
+        "cpu_time_total_str": "85.631ms",
+        "cuda_time_total_str": "1.120ms",
+        "count": 1360
+      },
+      {
+        "name": "aten::item",
+        "cpu_time_us": 72092.69299999948,
+        "cuda_time_us": 862.5810000008496,
+        "cpu_time_total_str": "72.093ms",
+        "cuda_time_total_str": "862.581us",
+        "count": 680
+      },
+      {
+        "name": "aten::_local_scalar_dense",
+        "cpu_time_us": 69730.20299999851,
+        "cuda_time_us": 862.5810000008496,
+        "cpu_time_total_str": "69.730ms",
+        "cuda_time_total_str": "862.581us",
+        "count": 680
+      },
+      {
+        "name": "aten::addmm",
+        "cpu_time_us": 33557.30700000045,
+        "cuda_time_us": 11818.537999997585,
+        "cpu_time_total_str": "33.557ms",
+        "cuda_time_total_str": "11.819ms",
+        "count": 672
+      },
+      {
+        "name": "aten::mul",
+        "cpu_time_us": 42529.52600000377,
+        "cuda_time_us": 2475.7169999989455,
+        "cpu_time_total_str": "42.530ms",
+        "cuda_time_total_str": "2.476ms",
+        "count": 2048
+      },
+      {
+        "name": "aten::_unique2",
+        "cpu_time_us": 40377.72200000001,
+        "cuda_time_us": 3090.2999999984895,
+        "cpu_time_total_str": "40.378ms",
+        "cuda_time_total_str": "3.090ms",
+        "count": 224
+      },
+      {
+        "name": "aten::add",
+        "cpu_time_us": 35275.59499999848,
+        "cuda_time_us": 1563.1309999999066,
+        "cpu_time_total_str": "35.276ms",
+        "cuda_time_total_str": "1.563ms",
+        "count": 1584
+      },
+      {
+        "name": "aten::index_put_",
+        "cpu_time_us": 31536.88400000095,
+        "cuda_time_us": 1501.5369999995382,
+        "cpu_time_total_str": "31.537ms",
+        "cuda_time_total_str": "1.502ms",
+        "count": 448
+      },
+      {
+        "name": "aten::_index_put_impl_",
+        "cpu_time_us": 30174.925000000625,
+        "cuda_time_us": 1501.5369999995382,
+        "cpu_time_total_str": "30.175ms",
+        "cuda_time_total_str": "1.502ms",
+        "count": 448
+      },
+      {
+        "name": "cudaMemcpyAsync",
+        "cpu_time_us": 30597.714999997228,
+        "cuda_time_us": 0,
+        "cpu_time_total_str": "30.598ms",
+        "cuda_time_total_str": "0.000us",
+        "count": 1360
+      },
+      {
+        "name": "Activity Buffer Request",
+        "cpu_time_us": 24455.832000000017,
+        "cuda_time_us": 1259.771999999908,
+        "cpu_time_total_str": "24.456ms",
+        "cuda_time_total_str": "1.260ms",
+        "count": 3
+      },
+      {
+        "name": "aten::index",
+        "cpu_time_us": 20335.815000000268,
+        "cuda_time_us": 511.3420000007209,
+        "cpu_time_total_str": "20.336ms",
+        "cuda_time_total_str": "511.342us",
+        "count": 224
+      },
+      {
+        "name": "aten::arange",
+        "cpu_time_us": 13924.388000000185,
+        "cuda_time_us": 321.66400000000067,
+        "cpu_time_total_str": "13.924ms",
+        "cuda_time_total_str": "321.664us",
+        "count": 464
+      }
+    ],
+    "total_cuda_us": 2037902.2589999763,
+    "total_cpu_us": 2779345.2800000072
+  },
+  "verdict": {
+    "bound": "mixed",
+    "notes": "Compare cudaLaunchKernel CPU dispatch vs aggregate CUDA kernel time."
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "artifact_type": "continuous_batching_kv_live_smoke",
+  "model_name": "sshleifer/tiny-gpt2",
+  "backend": "transformers",
+  "status": "ok",
+  "concurrency_results": [
+    {
+      "concurrency": 16,
+      "total_requests": 64,
+      "completed_requests": 64,
+      "failed_requests": 0,
+      "success_rate": 1.0,
+      "output_tokens": 1024,
+      "output_tokens_per_sec": 838.6878859050728,
+      "elapsed_sec": 1.2209548000028008,
+      "non_completed_statuses": []
+    },
+    {
+      "concurrency": 32,
+      "total_requests": 64,
+      "completed_requests": 64,
+      "failed_requests": 0,
+      "success_rate": 1.0,
+      "output_tokens": 1024,
+      "output_tokens_per_sec": 911.5938265510435,
+      "elapsed_sec": 1.123307300000306,
+      "non_completed_statuses": []
+    },
+    {
+      "concurrency": 64,
+      "total_requests": 64,
+      "completed_requests": 64,
+      "failed_requests": 0,
+      "success_rate": 1.0,
+      "output_tokens": 1024,
+      "output_tokens_per_sec": 938.9927945116434,
+      "elapsed_sec": 1.0905302000028314,
+      "non_completed_statuses": []
+    }
+  ],
+  "concurrency_16": {
+    "concurrency": 16,
+    "total_requests": 64,
+    "completed_requests": 64,
+    "failed_requests": 0,
+    "success_rate": 1.0,
+    "output_tokens": 1024,
+    "output_tokens_per_sec": 838.6878859050728,
+    "elapsed_sec": 1.2209548000028008,
+    "non_completed_statuses": []
+  },
+  "allocator_block_size_tokens": 16,
+  "allocations_total": 386,
+  "frees_total": 194,
+  "allocation_failures_total": 0,
+  "peak_kv_bytes": 32768,
+  "peak_active_requests": 32,
+  "max_batch_size": 32,
+  "continuous_batches_total": 143,
+  "active_requests_current": 0,
+  "active_allocations_current": 0,
+  "stream_completed_total": 193,
+  "stream_cancelled_total": 1,
+  "stream_timed_out_total": 0,
+  "request_errors_total": 0,
+  "cancellation_cleanup_ok": true,
+  "decode_step_ms": 8,
+  "note": "CPU-friendly real-transformer streaming concurrency smoke; not a vLLM comparison or production-scale throughput claim."
+}

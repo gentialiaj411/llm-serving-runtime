@@ -1,0 +1,14 @@
+{
+  "peak_paged_bytes": 3531603968,
+  "peak_contiguous_baseline_bytes": 34347417600,
+  "reduction_percent": 89.7179927494753,
+  "baseline_definition": "contiguous_baseline_bytes = sum(prompt_tokens + output_tokens) * bytes_per_token",
+  "workload_model": "synthetic_uniform_prompt_output_with_timeout",
+  "request_token_capacity_definition": "prompt_tokens + output_tokens",
+  "deterministic": true,
+  "seed": 5070,
+  "request_count": 200,
+  "bytes_per_token": 262144,
+  "block_size_tokens": 16,
+  "max_active": 16
+}

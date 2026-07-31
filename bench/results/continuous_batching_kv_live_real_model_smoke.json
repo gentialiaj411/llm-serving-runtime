@@ -1,0 +1,37 @@
+{
+  "artifact_type": "continuous_batching_kv_live_smoke",
+  "model_name": "Qwen/Qwen2-1.5B-Instruct",
+  "backend": "transformers",
+  "status": "failed",
+  "concurrency_results": [
+    {
+      "concurrency": 1,
+      "total_requests": 4,
+      "completed_requests": 4,
+      "failed_requests": 0,
+      "success_rate": 1.0,
+      "output_tokens": 64,
+      "output_tokens_per_sec": 20.834720280044632,
+      "elapsed_sec": 3.0717955000000075,
+      "non_completed_statuses": []
+    }
+  ],
+  "concurrency_16": null,
+  "allocator_block_size_tokens": 16,
+  "allocations_total": 10,
+  "frees_total": 6,
+  "allocation_failures_total": 0,
+  "peak_kv_bytes": 5505024,
+  "peak_active_requests": 1,
+  "max_batch_size": 1,
+  "continuous_batches_total": 69,
+  "active_requests_current": 0,
+  "active_allocations_current": 0,
+  "stream_completed_total": 5,
+  "stream_cancelled_total": 1,
+  "stream_timed_out_total": 0,
+  "request_errors_total": 0,
+  "cancellation_cleanup_ok": true,
+  "decode_step_ms": 8,
+  "note": "CPU-friendly real-transformer streaming concurrency smoke; not a vLLM comparison or production-scale throughput claim."
+}

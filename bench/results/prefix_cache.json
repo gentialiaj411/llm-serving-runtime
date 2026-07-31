@@ -1,0 +1,42 @@
+{
+  "timestamp_utc": "2026-05-24T21:09:04.924167+00:00",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "shared_prefix_tokens": 512,
+  "request_count": 20,
+  "max_new_tokens": 32,
+  "concurrency": 4,
+  "measurement": "measured_on_gpu",
+  "modes": {
+    "baseline": {
+      "prefix_cache_enabled": false,
+      "request_count": 20,
+      "concurrency": 4,
+      "completed_requests": 20,
+      "success_rate": 1.0,
+      "output_tokens": 640,
+      "output_tokens_per_sec": 10.75646518768655,
+      "duration_s": 59.49910020000243,
+      "prefix_cache_hits": 0,
+      "prefix_cache_misses": 0,
+      "prefix_cache_hit_rate": 0.0,
+      "prefix_cache_evictions": 0,
+      "prefix_cache_entries": 0
+    },
+    "prefix_cache": {
+      "prefix_cache_enabled": true,
+      "request_count": 20,
+      "concurrency": 4,
+      "completed_requests": 20,
+      "success_rate": 1.0,
+      "output_tokens": 640,
+      "output_tokens_per_sec": 15.808691631997904,
+      "duration_s": 40.48405869999988,
+      "prefix_cache_hits": 19,
+      "prefix_cache_misses": 1,
+      "prefix_cache_hit_rate": 0.95,
+      "prefix_cache_evictions": 0,
+      "prefix_cache_entries": 1
+    }
+  },
+  "throughput_improvement_percent": 46.96920741299739
+}

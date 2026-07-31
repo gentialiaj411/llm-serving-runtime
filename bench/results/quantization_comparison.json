@@ -1,0 +1,83 @@
+{
+  "artifact_type": "quantization_comparison",
+  "generated_at_utc": "2026-05-23T22:32:02Z",
+  "fp16_baseline": {
+    "quant_mode": "none",
+    "model_id": "Qwen/Qwen2-1.5B-Instruct",
+    "per_concurrency": [
+      {
+        "concurrency": 1,
+        "requests": 64,
+        "completed": 64,
+        "success_rate": 1.0,
+        "throughput_output_tokens_per_sec": 26.042965756752277,
+        "latency_p50_ms": 2336.67475799939,
+        "latency_p99_ms": 3000.5119407894194,
+        "peak_vram_gb": 5.1630859375
+      },
+      {
+        "concurrency": 4,
+        "requests": 64,
+        "completed": 64,
+        "success_rate": 1.0,
+        "throughput_output_tokens_per_sec": 77.489303807366,
+        "latency_p50_ms": 3210.012179500154,
+        "latency_p99_ms": 3518.11009951065,
+        "peak_vram_gb": 5.0849609375
+      },
+      {
+        "concurrency": 16,
+        "requests": 64,
+        "completed": 64,
+        "success_rate": 1.0,
+        "throughput_output_tokens_per_sec": 292.5331582762189,
+        "latency_p50_ms": 3434.288958000252,
+        "latency_p99_ms": 3624.379866909585,
+        "peak_vram_gb": 5.1494140625
+      }
+    ],
+    "peak_vram_gb": 5.1630859375
+  },
+  "awq_int4": {
+    "quant_mode": "int4",
+    "model_id": "Qwen/Qwen2-1.5B-Instruct-AWQ",
+    "per_concurrency": [
+      {
+        "concurrency": 1,
+        "requests": 64,
+        "completed": 64,
+        "success_rate": 1.0,
+        "throughput_output_tokens_per_sec": 15.772970047640793,
+        "latency_p50_ms": 3928.02463299995,
+        "latency_p99_ms": 4927.488660049821,
+        "peak_vram_gb": 3.6259765625
+      },
+      {
+        "concurrency": 4,
+        "requests": 64,
+        "completed": 64,
+        "success_rate": 1.0,
+        "throughput_output_tokens_per_sec": 50.882702637632214,
+        "latency_p50_ms": 4869.034671499321,
+        "latency_p99_ms": 5558.8379761693795,
+        "peak_vram_gb": 3.5537109375
+      },
+      {
+        "concurrency": 16,
+        "requests": 64,
+        "completed": 64,
+        "success_rate": 1.0,
+        "throughput_output_tokens_per_sec": 182.0359666330551,
+        "latency_p50_ms": 5374.0687370009255,
+        "latency_p99_ms": 5787.913857250405,
+        "peak_vram_gb": 3.6376953125
+      }
+    ],
+    "peak_vram_gb": 3.6376953125
+  },
+  "model_quality_check": {
+    "prompt": "Summarize continuous batching benefits in one paragraph.",
+    "tokens_compared": 64,
+    "token_level_agreement_rate": 0.171875
+  }
+}

@@ -1,0 +1,54 @@
+[
+  {
+    "kv_backend": "reserved",
+    "num_active": 1,
+    "decode_steps_profiled": 3,
+    "tokens_per_step": 1,
+    "cudaLaunchKernel_per_step": 1313.0,
+    "cudaLaunchKernel_per_token": 1313.0,
+    "samples": [
+      1313,
+      1313,
+      1313
+    ]
+  },
+  {
+    "kv_backend": "reserved",
+    "num_active": 8,
+    "decode_steps_profiled": 3,
+    "tokens_per_step": 8,
+    "cudaLaunchKernel_per_step": 10504.0,
+    "cudaLaunchKernel_per_token": 1313.0,
+    "samples": [
+      10504,
+      10504,
+      10504
+    ]
+  },
+  {
+    "kv_backend": "paged",
+    "num_active": 1,
+    "decode_steps_profiled": 3,
+    "tokens_per_step": 1,
+    "cudaLaunchKernel_per_step": 1054.0,
+    "cudaLaunchKernel_per_token": 1054.0,
+    "samples": [
+      1054,
+      1054,
+      1054
+    ]
+  },
+  {
+    "kv_backend": "paged",
+    "num_active": 8,
+    "decode_steps_profiled": 3,
+    "tokens_per_step": 8,
+    "cudaLaunchKernel_per_step": 8432.0,
+    "cudaLaunchKernel_per_token": 1054.0,
+    "samples": [
+      8432,
+      8432,
+      8432
+    ]
+  }
+]

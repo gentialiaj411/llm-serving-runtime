@@ -1,0 +1,92 @@
+{
+  "steps": [
+    {
+      "name": "unit_tests",
+      "status": "passed",
+      "required": true,
+      "command": [
+        "C:\\Users\\bhask\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests"
+      ],
+      "stdout": ""
+    },
+    {
+      "name": "phase2_integration_test",
+      "status": "passed",
+      "required": true,
+      "command": [
+        "C:\\Users\\bhask\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_phase2_integration.py"
+      ],
+      "stdout": ""
+    },
+    {
+      "name": "kv_pressure",
+      "status": "passed",
+      "required": true,
+      "command": [
+        "C:\\Users\\bhask\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "bench/scripts/kv_pressure.py",
+        "--output",
+        "bench/results/kv-pressure.json"
+      ],
+      "stdout": "wrote: bench\\results\\kv-pressure.json"
+    },
+    {
+      "name": "throughput_phase2_real_inference",
+      "status": "passed",
+      "required": false,
+      "command": [
+        "C:\\Users\\bhask\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "bench/harness/run.py",
+        "--base-url",
+        "http://127.0.0.1:8000/v1/chat/completions",
+        "--system",
+        "phase2",
+        "--model",
+        "sshleifer/tiny-gpt2",
+        "--scenarios",
+        "bench/scenarios/phase2_real_inference_concurrency.yaml",
+        "--run-id",
+        "resume-evidence-phase2-real-inference",
+        "--inference-mode",
+        "real_model_inference",
+        "--determinism-check",
+        "skip"
+      ],
+      "stdout": "wrote: bench\\results\\resume-evidence-phase2-real-inference.csv\nwrote: bench\\results\\resume-evidence-phase2-real-inference.manifest.json"
+    },
+    {
+      "name": "chaos_benchmark",
+      "status": "blocked",
+      "required": false,
+      "reason": "missing --chaos-worker-pids; cannot inject worker failures reproducibly"
+    },
+    {
+      "name": "manifest_schema_validation",
+      "status": "passed",
+      "required": true,
+      "command": [
+        "C:\\Users\\bhask\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "bench/scripts/validate_manifests.py"
+      ],
+      "stdout": "Validated 25 manifest files against C:\\Users\\bhask\\Documents\\PROJECTS\\orcaforge\\bench\\schemas\\manifest.schema.json"
+    }
+  ],
+  "claims_supported": [
+    "openai_compatible_runtime_path",
+    "kv_modeled_reduction",
+    "throughput_real_inference",
+    "TODO/VERIFY"
+  ]
+}

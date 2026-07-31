@@ -1,0 +1,113 @@
+{
+  "timestamp_utc": "2026-06-16T02:53:03.355838+00:00",
+  "measurement": "repeat_run_aggregate",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "workload": {
+    "request_count": 5,
+    "repeat_count": 5,
+    "seed": 5070,
+    "max_active": 8,
+    "underlying_requests_per_run": 32
+  },
+  "throughput_tokens_per_sec": {
+    "contiguous": {
+      "median": 19.91318981721526,
+      "min": 19.090433891840775,
+      "max": 21.42093116389116,
+      "stdev": 0.9787812569668537,
+      "mean": 20.213490944317908,
+      "samples": [
+        21.42093116389116,
+        21.02834133017178,
+        19.090433891840775,
+        19.614558518470552,
+        19.91318981721526
+      ]
+    },
+    "paged": {
+      "median": 3.198311694476767,
+      "min": 1.513608595486701,
+      "max": 4.116836947247892,
+      "stdev": 1.0235444809172192,
+      "mean": 3.172652930831833,
+      "samples": [
+        3.198311694476767,
+        3.910002922421711,
+        3.124504494526095,
+        4.116836947247892,
+        1.513608595486701
+      ]
+    },
+    "paged_minus_contiguous": {
+      "median": -17.11833840775007,
+      "min": -18.39958122172856,
+      "max": -15.49772157122266,
+      "stdev": 1.302443253479342,
+      "mean": -17.040838013486074,
+      "samples": [
+        -18.222619469414393,
+        -17.11833840775007,
+        -15.96592939731468,
+        -15.49772157122266,
+        -18.39958122172856
+      ]
+    },
+    "paged_minus_contiguous_percent": {
+      "median": -83.63314049210007,
+      "min": -92.3989646592021,
+      "max": -79.01131986543992,
+      "stdev": 5.073823690173544,
+      "mean": -84.30373591642143,
+      "samples": [
+        -85.06922192127624,
+        -81.40603264408887,
+        -83.63314049210007,
+        -79.01131986543992,
+        -92.3989646592021
+      ]
+    }
+  },
+  "peak_nvidia_smi_mb": {
+    "contiguous": {
+      "median": 4859.0,
+      "min": 4859.0,
+      "max": 5056.0,
+      "stdev": 94.08506789071261,
+      "mean": 4926.0
+    },
+    "paged": {
+      "median": 5855.0,
+      "min": 5855.0,
+      "max": 6052.0,
+      "stdev": 94.08506789071261,
+      "mean": 5922.0
+    }
+  },
+  "peak_torch_cuda_mb": {
+    "contiguous": {
+      "median": 3373.64697265625,
+      "min": 3373.64697265625,
+      "max": 3373.64697265625,
+      "stdev": 0.0,
+      "mean": 3373.64697265625
+    },
+    "paged": {
+      "median": 4224.234375,
+      "min": 4224.234375,
+      "max": 4224.234375,
+      "stdev": 0.0,
+      "mean": 4224.234375
+    }
+  },
+  "conclusion": {
+    "throughput_at_parity_within_noise": false,
+    "median_paged_over_contiguous_ratio": 0.16061272572773735
+  },
+  "individual_runs": [
+    "bench/results/paged_kv_repeat/runs/run_01.json",
+    "bench/results/paged_kv_repeat/runs/run_02.json",
+    "bench/results/paged_kv_repeat/runs/run_03.json",
+    "bench/results/paged_kv_repeat/runs/run_04.json",
+    "bench/results/paged_kv_repeat/runs/run_05.json"
+  ]
+}

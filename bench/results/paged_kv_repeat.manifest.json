@@ -1,0 +1,8 @@
+{
+  "run_id": "paged-kv-repeat-runs",
+  "timestamp_utc": "2026-06-16T02:53:03.355838+00:00",
+  "system_under_test": "phase2",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "rows": 5,
+  "gpu_count": 1
+}
