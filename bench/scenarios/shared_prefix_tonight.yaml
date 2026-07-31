@@ -1,0 +1,6 @@
+version: "1"
+scenarios:
+  - id: shared_prefix
+    concurrency: [8]
+    prompt_tokens: 512
+    max_output_tokens: 32

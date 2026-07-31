@@ -3,20 +3,32 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from statistics import mean
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS_DIR = ROOT / "bench" / "results"
 OUTPUT_PATH = RESULTS_DIR / "comparison.png"
+ORCAFORGE_CSV = RESULTS_DIR / "phase2-rtx5070-throughput.csv"
+VLLM_CSV = RESULTS_DIR / "vllm-baseline-final.csv"
+ORCAFORGE_HEAD_TO_HEAD_CSV = RESULTS_DIR / "orcaforge-head-to-head-tonight.csv"
+VLLM_HEAD_TO_HEAD_CSV = RESULTS_DIR / "vllm-head-to-head-tonight.csv"
+ORCAFORGE_SHARED_PREFIX_CSV = RESULTS_DIR / "orcaforge-shared-prefix-tonight.csv"
+VLLM_SHARED_PREFIX_ON_CSV = RESULTS_DIR / "vllm-shared-prefix-on-tonight.csv"
+
+TARGET_ROWS = [
+    ("short_short", "1", "short_short c1"),
+    ("short_short", "16", "short_short c16"),
+    ("short_long", "1", "short_long c1"),
+    ("short_long", "16", "short_long c16"),
+    ("shared_prefix", "8", "shared_prefix c8"),
+]
 
 METRICS = [
     ("tokens_per_sec_output", "Output tokens/sec"),
-    ("ttft_ms_p50", "TTFT p50 (ms)"),
-    ("inter_token_latency_p50", "ITL p50 (ms)"),
-    ("est_dollars_per_million_output_tokens", "$/M output tokens"),
 ]
 
 
@@ -33,61 +45,58 @@ def manifest_mode(csv_path: Path) -> str | None:
     return str(mode) if mode is not None else None
 
 
-def system_label(system_under_test: str) -> str | None:
-    system = system_under_test.lower()
-    if "vllm" in system:
-        return "vLLM"
-    if "transformers" in system:
-        return "Orcaforge"
-    return None
+def load_target_row(csv_path: Path, scenario_id: str, concurrency: str) -> dict[str, float] | None:
+    if not csv_path.exists():
+        return None
+    if manifest_mode(csv_path) != "real_model_inference":
+        return None
 
-
-def load_rows() -> dict[str, list[dict[str, float]]]:
-    by_system: dict[str, list[dict[str, float]]] = {}
-    for csv_path in sorted(RESULTS_DIR.glob("*.csv")):
-        with csv_path.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-        if not rows:
-            continue
-
-        mode = manifest_mode(csv_path)
-        if mode != "real_model_inference":
-            continue
-        for row in rows:
-            label = system_label(row.get("system_under_test", ""))
-            if label is None:
+    with csv_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("scenario_id") != scenario_id:
                 continue
-
+            if row.get("concurrency") != concurrency:
+                continue
+            if float(row.get("success_rate", "0") or 0) <= 0:
+                return None
             values: dict[str, float] = {}
             for key, _ in METRICS:
                 try:
                     values[key] = float(row[key])
                 except (KeyError, TypeError, ValueError):
-                    break
-            else:
-                by_system.setdefault(label, []).append(values)
-    return by_system
+                    return None
+            return values
+    return None
 
 
-def summarize(rows_by_system: dict[str, list[dict[str, float]]]) -> dict[str, dict[str, float]]:
-    return {
-        system: {key: mean(row[key] for row in rows) for key, _ in METRICS}
-        for system, rows in rows_by_system.items()
-        if rows
-    }
+def summarize() -> dict[str, dict[str, float]]:
+    summary: dict[str, dict[str, float]] = {}
+    for scenario_id, concurrency, label in TARGET_ROWS:
+        orca_csv = ORCAFORGE_SHARED_PREFIX_CSV if scenario_id == "shared_prefix" else ORCAFORGE_HEAD_TO_HEAD_CSV
+        vllm_csv = VLLM_SHARED_PREFIX_ON_CSV if scenario_id == "shared_prefix" else VLLM_HEAD_TO_HEAD_CSV
+        orcaforge_row = load_target_row(orca_csv, scenario_id, concurrency)
+        vllm_row = load_target_row(vllm_csv, scenario_id, concurrency)
+        if orcaforge_row is None or vllm_row is None:
+            continue
+        summary[label] = {
+            "Orcaforge": orcaforge_row["tokens_per_sec_output"],
+            "vLLM": vllm_row["tokens_per_sec_output"],
+        }
+    return summary
 
 
 def main() -> int:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    summary = summarize(load_rows())
-    systems = [system for system in ("Orcaforge", "vLLM") if system in summary]
+    summary = summarize()
 
-    if len(systems) < 2:
-        print("Need at least two real-inference systems containing 'transformers' and 'vllm'; no chart written.")
+    if not summary:
+        print("Need fresh Orcaforge/vLLM head-to-head artifacts; no chart written.")
         return 0
 
-    x_positions = range(len(METRICS))
+    systems = ["Orcaforge", "vLLM"]
+    labels = list(summary)
+    x_positions = range(len(labels))
     width = 0.36
     offsets = {
         systems[0]: -width / 2,
@@ -96,14 +105,14 @@ def main() -> int:
 
     fig, ax = plt.subplots(figsize=(11, 6))
     for system in systems:
-        values = [summary[system][key] for key, _ in METRICS]
+        values = [summary[label][system] for label in labels]
         bars = ax.bar([x + offsets[system] for x in x_positions], values, width, label=system)
         ax.bar_label(bars, fmt="%.1f", padding=3, fontsize=8)
 
-    ax.set_title("Real-Inference Smoke Comparison")
-    ax.set_ylabel("Metric value")
+    ax.set_title("Fresh Real-Inference Head-to-Head (TinyLlama, vLLM 0.21.0)")
+    ax.set_ylabel("Output tokens/sec")
     ax.set_xticks(list(x_positions))
-    ax.set_xticklabels([label for _, label in METRICS], rotation=15, ha="right")
+    ax.set_xticklabels(labels, rotation=15, ha="right")
     ax.legend()
     ax.grid(axis="y", alpha=0.25)
     fig.tight_layout()

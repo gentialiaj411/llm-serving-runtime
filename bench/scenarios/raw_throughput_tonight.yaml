@@ -1,0 +1,10 @@
+version: "1"
+scenarios:
+  - id: short_short
+    concurrency: [1, 16]
+    prompt_tokens: 128
+    max_output_tokens: 64
+  - id: short_long
+    concurrency: [1, 16]
+    prompt_tokens: 128
+    max_output_tokens: 512
