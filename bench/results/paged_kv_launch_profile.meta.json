@@ -1,0 +1,130 @@
+{
+  "timestamp_note": "CUPTI unavailable on native Windows/sm_120; using CUDA aten-op proxy",
+  "triton_available": true,
+  "scaling": {
+    "reserved": {
+      "b1_ops_per_step": 2464.0,
+      "b8_ops_per_step": 19712.0,
+      "growth_b1_to_b8": 8.0,
+      "b1_wall_ms": 88.30179800000337,
+      "b8_wall_ms": 335.75987266666135,
+      "b8_tok_per_s_proxy": 23.82655180460564
+    },
+    "paged": {
+      "b1_ops_per_step": 2787.0,
+      "b8_ops_per_step": 3697.0,
+      "growth_b1_to_b8": 1.3265159669895945,
+      "b1_wall_ms": 61.759024333331546,
+      "b8_wall_ms": 87.14168900000156,
+      "b8_tok_per_s_proxy": 91.80450932044542
+    }
+  },
+  "acceptance": {
+    "target_growth_le_2x": {
+      "reserved": false,
+      "paged": true
+    },
+    "before_after_throughput_proxy": {
+      "before_mode": "sequential_next_token_legacy (old 8x launch curve)",
+      "before_b8_tok_per_s_proxy": 23.82655180460564,
+      "after_mode": "batched_paged_decode_step + persistent slots + Triton",
+      "after_b8_tok_per_s_proxy": 91.80450932044542,
+      "notes": "tok/s proxy = tokens_per_step / wall_ms_per_step; not a harness success_rate run"
+    },
+    "legacy_cupti_curve": {
+      "source": "bench/results/paged_kv_launch_profile.json prior to Phase 2",
+      "paged_b1_launches_per_step": 1054,
+      "paged_b8_launches_per_step": 8432,
+      "growth": 8.0,
+      "methodology": "sequential next_token under CUPTI"
+    },
+    "phase2_proxy_curve": {
+      "paged_b1_ops_per_step": 2787.0,
+      "paged_b8_ops_per_step": 3697.0,
+      "growth": 1.3265159669895945,
+      "methodology": "batched _paged_decode_step; TorchDispatchMode CUDA aten-op proxy (WSL+Triton)"
+    }
+  },
+  "rows": [
+    {
+      "kv_backend": "reserved",
+      "num_active": 1,
+      "mode": "single_next_token",
+      "decode_steps_profiled": 3,
+      "tokens_per_step": 1,
+      "cuda_op_proxy_per_step": 2464.0,
+      "cuda_op_proxy_per_token": 2464.0,
+      "cudaLaunchKernel_per_step": 2464.0,
+      "cudaLaunchKernel_per_token": 2464.0,
+      "wall_ms_per_step_mean": 88.30179800000337,
+      "samples": [
+        2464,
+        2464,
+        2464
+      ],
+      "metric": "TorchDispatchMode_cuda_aten_ops"
+    },
+    {
+      "kv_backend": "reserved",
+      "num_active": 8,
+      "mode": "sequential_next_token_reserved",
+      "decode_steps_profiled": 3,
+      "tokens_per_step": 8,
+      "cuda_op_proxy_per_step": 19712.0,
+      "cuda_op_proxy_per_token": 2464.0,
+      "cudaLaunchKernel_per_step": 19712.0,
+      "cudaLaunchKernel_per_token": 2464.0,
+      "wall_ms_per_step_mean": 335.75987266666135,
+      "samples": [
+        19712,
+        19712,
+        19712
+      ],
+      "metric": "TorchDispatchMode_cuda_aten_ops"
+    },
+    {
+      "kv_backend": "paged",
+      "num_active": 1,
+      "mode": "batched_paged_decode_step",
+      "decode_steps_profiled": 3,
+      "tokens_per_step": 1,
+      "cuda_op_proxy_per_step": 2787.0,
+      "cuda_op_proxy_per_token": 2787.0,
+      "cudaLaunchKernel_per_step": 2787.0,
+      "cudaLaunchKernel_per_token": 2787.0,
+      "wall_ms_per_step_mean": 61.759024333331546,
+      "samples": [
+        2787,
+        2787,
+        2787
+      ],
+      "metric": "TorchDispatchMode_cuda_aten_ops"
+    },
+    {
+      "kv_backend": "paged",
+      "num_active": 8,
+      "mode": "batched_paged_decode_step",
+      "decode_steps_profiled": 3,
+      "tokens_per_step": 8,
+      "cuda_op_proxy_per_step": 3697.0,
+      "cuda_op_proxy_per_token": 462.125,
+      "cudaLaunchKernel_per_step": 3697.0,
+      "cudaLaunchKernel_per_token": 462.125,
+      "wall_ms_per_step_mean": 87.14168900000156,
+      "samples": [
+        3697,
+        3697,
+        3697
+      ],
+      "metric": "TorchDispatchMode_cuda_aten_ops"
+    },
+    {
+      "kv_backend": "paged",
+      "num_active": 8,
+      "mode": "sequential_next_token_legacy",
+      "cudaLaunchKernel_per_step": 22240.0,
+      "cudaLaunchKernel_per_token": 2780.0,
+      "metric": "TorchDispatchMode_cuda_aten_ops"
+    }
+  ]
+}

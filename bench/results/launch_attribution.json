@@ -1,0 +1,134 @@
+{
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "kv_backend": "paged",
+  "method": "TorchDispatchMode CUDA aten-op counts (CUPTI unavailable on this host)",
+  "cupti_status": "unavailable",
+  "rows": [
+    {
+      "num_active": 1,
+      "call_site_launch_counts": {
+        "site:model_forward_single": {
+          "launches_proxy": 2787,
+          "top_ops": {
+            "aten.view.default": 451,
+            "aten.mul.Tensor": 256,
+            "aten.select.int": 255,
+            "aten.add.Tensor": 198,
+            "aten.t.default": 197,
+            "aten.unsqueeze.default": 144,
+            "aten.slice.Tensor": 140,
+            "aten._unsafe_view.default": 114,
+            "aten.transpose.int": 113,
+            "aten.mm.default": 113,
+            "aten.addmm.default": 84,
+            "aten.lift_fresh.default": 58,
+            "aten._to_copy.default": 58,
+            "aten.cat.default": 57,
+            "aten.pow.Tensor_Scalar": 57
+          }
+        },
+        "site:concat_paged_caches": {
+          "launches_proxy": 0,
+          "top_ops": {}
+        }
+      },
+      "primary_decode_launches_proxy": 2787
+    },
+    {
+      "num_active": 8,
+      "call_site_launch_counts": {
+        "site:concat_paged_caches": {
+          "launches_proxy": 54,
+          "top_ops": {
+            "aten.clone.default": 28,
+            "aten.lift_fresh.default": 9,
+            "aten.select.int": 8,
+            "aten.copy_.default": 8,
+            "aten.zeros.default": 1
+          }
+        },
+        "site:model_forward_batched": {
+          "launches_proxy": 3697,
+          "top_ops": {
+            "aten.select.int": 689,
+            "aten.view.default": 395,
+            "aten._local_scalar_dense.default": 297,
+            "aten.copy_.default": 280,
+            "aten.mul.Tensor": 256,
+            "aten.add.Tensor": 226,
+            "aten.t.default": 197,
+            "aten._unsafe_view.default": 114,
+            "aten.transpose.int": 113,
+            "aten.mm.default": 113,
+            "aten.slice.Tensor": 112,
+            "aten.unsqueeze.default": 88,
+            "aten.addmm.default": 84,
+            "aten._to_copy.default": 58,
+            "aten.clone.default": 57
+          }
+        },
+        "site:decode_with_rebuild": {
+          "launches_proxy": 3697,
+          "top_ops": {
+            "aten.select.int": 689,
+            "aten.view.default": 395,
+            "aten._local_scalar_dense.default": 297,
+            "aten.copy_.default": 280,
+            "aten.mul.Tensor": 256,
+            "aten.add.Tensor": 226,
+            "aten.t.default": 197,
+            "aten._unsafe_view.default": 114,
+            "aten.transpose.int": 113,
+            "aten.mm.default": 113,
+            "aten.slice.Tensor": 112,
+            "aten.unsqueeze.default": 88,
+            "aten.addmm.default": 84,
+            "aten._to_copy.default": 58,
+            "aten.clone.default": 57
+          }
+        },
+        "site:split_paged_batch_cache": {
+          "launches_proxy": 24,
+          "top_ops": {
+            "aten.lift_fresh.default": 8,
+            "aten.select.int": 8,
+            "aten._local_scalar_dense.default": 8
+          }
+        },
+        "site:sequential_next_token": {
+          "launches_proxy": 22240,
+          "top_ops": {
+            "aten.view.default": 3608,
+            "aten.mul.Tensor": 2048,
+            "aten.select.int": 2024,
+            "aten.add.Tensor": 1584,
+            "aten.t.default": 1576,
+            "aten.unsqueeze.default": 1152,
+            "aten.slice.Tensor": 1120,
+            "aten._unsafe_view.default": 912,
+            "aten.transpose.int": 904,
+            "aten.mm.default": 904,
+            "aten.addmm.default": 672,
+            "aten._local_scalar_dense.default": 456,
+            "aten.lift_fresh.default": 456,
+            "aten._to_copy.default": 456,
+            "aten.cat.default": 456
+          }
+        }
+      },
+      "primary_decode_launches_proxy": 3697
+    }
+  ],
+  "verdict": {
+    "concat_is_dominant_launch_source": false,
+    "concat_launches_proxy_at_b8": 54,
+    "batched_forward_launches_proxy_b1": 2787,
+    "batched_forward_launches_proxy_b8": 3697,
+    "batched_launch_growth_b1_to_b8": 1.3265159669895945,
+    "sequential_launches_proxy_b8": 22240,
+    "sequential_explains_old_8x_curve": true,
+    "target_growth_le_2x": true,
+    "prime_suspect_confirmed": false,
+    "prime_suspect_note": "_concat_paged_caches only builds block_tables/seq_lens tensors; it does not torch.cat KV rows. Old 8x curve came from sequential next_token profiling."
+  }
+}

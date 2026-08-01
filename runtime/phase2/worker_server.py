@@ -229,6 +229,12 @@ class TransformersBackend:
                 device=device,
             )
             self._enable_block_paged_attention()
+            # Persistent continuous-batch slots (survive admission/completion).
+            self._paged_persistent: BlockPagedBatchCache | None = None
+            self._paged_persistent_capacity = 0
+        else:
+            self._paged_persistent = None
+            self._paged_persistent_capacity = 0
         self.lora_enabled = os.getenv("PHASE2_LORA", "0") == "1" and quant_mode != "int4" and not self.speculative
         self.lora_manager: LoRAManager | None = None
         if self.lora_enabled:
@@ -319,6 +325,42 @@ class TransformersBackend:
         cache = state.past_key_values
         if isinstance(cache, BlockPagedCache):
             cache.sync_block_ids(block_ids)
+        persistent = getattr(self, "_paged_persistent", None)
+        if persistent is not None:
+            slot = persistent.slot_of(state.req.request_id)
+            if slot is not None:
+                persistent.sync_block_ids_row(slot, list(block_ids))
+
+    def release_paged_request(self, request_id: str) -> None:
+        persistent = getattr(self, "_paged_persistent", None)
+        if persistent is not None:
+            persistent.release_slot(request_id)
+
+    def _ensure_paged_persistent(self, min_batch: int, max_blocks: int) -> BlockPagedBatchCache:
+        if self.kv_pool is None:
+            raise RuntimeError("paged persistent batch requires GpuKVBlockPool")
+        capacity = max(min_batch, int(os.getenv("PHASE2_MAX_ACTIVE", "8")), 1)
+        capacity = max(capacity, min_batch)
+        persistent = getattr(self, "_paged_persistent", None)
+        if persistent is None or self._paged_persistent_capacity < capacity:
+            # Grow: allocate a larger empty table; re-bind existing request rows.
+            old = persistent
+            persistent = BlockPagedBatchCache.empty(
+                self.model.config,
+                self.kv_pool,
+                max_batch_size=capacity,
+                max_blocks=max(max_blocks, 1),
+            )
+            if old is not None:
+                for rid, old_slot in list(old._request_to_slot.items()):
+                    new_slot = persistent.allocate_slot(rid)
+                    persistent.sync_block_ids_row(new_slot, list(old.block_ids_rows[old_slot]))
+                    persistent.seq_lens[new_slot] = old.seq_lens[old_slot]
+            self._paged_persistent = persistent
+            self._paged_persistent_capacity = capacity
+        else:
+            persistent.ensure_max_blocks(max_blocks)
+        return persistent
 
     def occupied_tokens(self, state: ActiveState) -> int:
         if state.input_ids is not None:
@@ -432,6 +474,30 @@ class TransformersBackend:
         for idx, state in enumerate(states):
             state.past_key_values = batch.extract_cache(idx)
 
+    def _bind_states_to_persistent(self, states: list[ActiveState]) -> BlockPagedBatchCache:
+        max_blocks = 1
+        for state in states:
+            cache = state.past_key_values
+            if isinstance(cache, BlockPagedCache):
+                max_blocks = max(max_blocks, len(cache.block_table_ids) or 1)
+        persistent = self._ensure_paged_persistent(len(states), max_blocks)
+        # Do not release slots for requests absent from this call — completions go through
+        # release_paged_request so mid-batch just-prefilled rows stay bound.
+        for state in states:
+            rid = state.req.request_id
+            if persistent.slot_of(rid) is None:
+                if not isinstance(state.past_key_values, BlockPagedCache):
+                    raise TypeError("binding persistent slot requires BlockPagedCache")
+                persistent.bind_cache(rid, state.past_key_values)
+            else:
+                cache = state.past_key_values
+                if isinstance(cache, BlockPagedCache):
+                    slot = persistent.slot_of(rid)
+                    assert slot is not None
+                    persistent.sync_block_ids_row(slot, list(cache.block_table_ids))
+                    persistent.seq_lens[slot] = int(cache.get_seq_length())
+        return persistent
+
     def _paged_prefill_groups(self, states: list[ActiveState]) -> dict[str, str]:
         """Prefill unprefilled rows; emit first token from prefill logits."""
         emitted: dict[str, str] = {}
@@ -482,7 +548,7 @@ class TransformersBackend:
         decode_states: list[ActiveState],
         batch_cache: BlockPagedBatchCache | None,
     ) -> tuple[dict[str, str], BlockPagedBatchCache | None]:
-        """One ragged batched decode forward over all rows (per-row seq_lens in the kernel)."""
+        """One ragged batched decode forward using persistent slot tables when possible."""
         emitted: dict[str, str] = {}
         input_ids = self.torch.tensor([[state.last_token_id] for state in decode_states], device=self.device)
 
@@ -494,17 +560,29 @@ class TransformersBackend:
                     past_key_values=state.past_key_values,
                     use_cache=True,
                 )
-                state.past_key_values = self._normalize_past_key_values(outputs.past_key_values)
+                new_cache = self._normalize_past_key_values(outputs.past_key_values)
+                state.past_key_values = new_cache
+                if isinstance(new_cache, BlockPagedCache):
+                    persistent = self._bind_states_to_persistent([state])
+                    batch_cache = persistent
+                else:
+                    batch_cache = getattr(self, "_paged_persistent", None)
             else:
-                if batch_cache is None or batch_cache._batch_size != len(decode_states):
-                    batch_cache = self._concat_paged_caches(decode_states)
+                persistent = self._bind_states_to_persistent(decode_states)
+                dense, slots = persistent.dense_active_cache(
+                    [state.req.request_id for state in decode_states]
+                )
                 outputs = self.model(
                     input_ids=input_ids,
-                    past_key_values=batch_cache,
+                    past_key_values=dense,
                     use_cache=True,
                 )
                 if isinstance(outputs.past_key_values, BlockPagedBatchCache):
-                    batch_cache = outputs.past_key_values
+                    dense = outputs.past_key_values
+                persistent.write_back_dense(dense, slots)
+                for idx, state in enumerate(decode_states):
+                    state.past_key_values = persistent.extract_cache(slots[idx])
+                batch_cache = persistent
 
             logits = outputs.logits[:, -1, :]
             next_ids = logits.argmax(dim=-1).tolist()
@@ -520,36 +598,23 @@ class TransformersBackend:
     def _paged_next_tokens_batch_for_adapter(
         self, states: list[ActiveState], max_tokens: int
     ) -> dict[str, list[str]]:
-        """Multi-step paged decode with one live BlockPagedBatchCache across all steps.
-
-        The live batch cache must be split back onto exactly the rows that own it.
-        Continuous batching admits new requests mid-flight: those just-prefilled rows
-        are *not* in the current batch cache, so splitting against all prefilled states
-        raises IndexError and the scheduler then fails the entire ready set.
-        """
+        """Multi-step paged decode using persistent batch slots across admissions."""
         emitted: dict[str, list[str]] = {state.req.request_id: [] for state in states}
         if max_tokens <= 0 or not states:
             return emitted
 
-        batch_cache: BlockPagedBatchCache | None = None
-        batch_owners: list[ActiveState] = []
-
-        def _flush_batch_cache() -> None:
-            nonlocal batch_cache, batch_owners
-            if batch_cache is not None and len(batch_owners) > 1:
-                self._split_paged_batch_cache(batch_cache, batch_owners)
-            batch_cache = None
-            batch_owners = []
+        batch_cache: BlockPagedBatchCache | None = getattr(self, "_paged_persistent", None)
 
         for _step in range(max_tokens):
             just_prefilled: set[str] = set()
             unprefilled = [state for state in states if not state.prompt_prefilled]
             if unprefilled:
-                # Membership is about to change; sync seq_lens back before prefill.
-                _flush_batch_cache()
                 for rid, token in self._paged_prefill_groups(unprefilled).items():
                     emitted[rid].append(token)
                     just_prefilled.add(rid)
+                prefilled = [s for s in states if s.prompt_prefilled]
+                if prefilled:
+                    batch_cache = self._bind_states_to_persistent(prefilled)
 
             decode_states = [
                 state
@@ -559,18 +624,10 @@ class TransformersBackend:
             if not decode_states:
                 continue
 
-            if batch_owners and (
-                len(batch_owners) != len(decode_states)
-                or any(left is not right for left, right in zip(batch_owners, decode_states))
-            ):
-                _flush_batch_cache()
-
             step_emitted, batch_cache = self._paged_decode_step(decode_states, batch_cache)
-            batch_owners = list(decode_states)
             for rid, token in step_emitted.items():
                 emitted[rid].append(token)
 
-        _flush_batch_cache()
         return emitted
 
     def _paged_next_tokens_batch(
@@ -1279,6 +1336,9 @@ async def _continuous_batch_loop() -> None:
             if state is not None:
                 _release_prefix_entry(state)
                 state.contiguous_kv_hold = None
+            backend = _backend
+            if backend is not None and hasattr(backend, "release_paged_request"):
+                backend.release_paged_request(rid)
             if _allocator is not None:
                 _allocator.free_request(rid, reason=finished_reasons.get(rid, "complete"))
             _cancelled.pop(rid, None)

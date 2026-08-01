@@ -705,7 +705,16 @@ def _paged_attention_decode_batched_torch(
     seq_lens: torch.Tensor,
     scaling: float,
     num_kv_groups: int,
+    *,
+    pool: GpuKVBlockPool | None = None,
+    layer_idx: int | None = None,
 ) -> torch.Tensor:
+    """Torch fallback: one batched gather + SDPA (not a Python per-row loop)."""
+    if pool is not None and layer_idx is not None:
+        keys, values = pool.gather_layer_batch(layer_idx, block_tables, seq_lens)
+        return reference_sdpa_attention(query, keys, values, scaling, num_kv_groups)
+
+    # Legacy per-row path when pool handle is unavailable.
     batch_size = query.shape[0]
     outs = []
     max_blocks = block_tables.shape[1]
@@ -747,7 +756,15 @@ def paged_attention_decode_batched(
             query, k_layer, v_layer, block_tables, seq_lens, scaling, num_kv_groups
         )
     return _paged_attention_decode_batched_torch(
-        query, k_layer, v_layer, block_tables, seq_lens, scaling, num_kv_groups
+        query,
+        k_layer,
+        v_layer,
+        block_tables,
+        seq_lens,
+        scaling,
+        num_kv_groups,
+        pool=pool,
+        layer_idx=metadata.layer_idx,
     )
 
 

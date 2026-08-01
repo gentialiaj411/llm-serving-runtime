@@ -8,8 +8,6 @@ import torch.nn.functional as F
 from runtime.phase2.paged_attention_triton import (
     get_paged_decode_batch_metadata,
     paged_attention_decode_batched,
-    reference_sdpa_attention,
-    triton_available,
 )
 
 
@@ -37,20 +35,15 @@ def block_paged_attention_forward(
     num_kv_groups = getattr(module, "num_key_value_groups", 1)
     meta = get_paged_decode_batch_metadata()
     if meta is not None and query.shape[-2] == 1 and query.is_cuda:
-        batch_size = query.shape[0]
-        if triton_available():
-            attn_output = paged_attention_decode_batched(
-                query=query,
-                metadata=meta,
-                num_kv_groups=num_kv_groups,
-                scaling=scaling,
-            )
-            attn_output = attn_output.transpose(1, 2).contiguous()
-            return attn_output, None
-        keys, values = meta.pool.gather_layer_batch(
-            meta.layer_idx, meta.block_tables, meta.seq_lens
+        # Always use paged_attention_decode_batched — it has a torch fallback when
+        # Triton is unavailable. Gathering full K/V every layer scales launches
+        # with batch size and defeats continuous-batch amortization.
+        attn_output = paged_attention_decode_batched(
+            query=query,
+            metadata=meta,
+            num_kv_groups=num_kv_groups,
+            scaling=scaling,
         )
-        attn_output = reference_sdpa_attention(query, keys, values, scaling, num_kv_groups)
         attn_output = attn_output.transpose(1, 2).contiguous()
         return attn_output, None
 
