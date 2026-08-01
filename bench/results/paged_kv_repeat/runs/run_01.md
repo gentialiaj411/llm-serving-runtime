@@ -1,6 +1,6 @@
 # Paged KV — measured GPU memory (Qwen2-1.5B)
 
-- Run UTC: `2026-06-16T02:26:29.862713+00:00`
+- Run UTC: `2026-07-31T23:51:24.432255+00:00`
 - Model: `Qwen/Qwen2-1.5B-Instruct`
 - GPU: `NVIDIA GeForce RTX 5070 Laptop GPU`
 - Workload: `32` requests, variable prompt/output (seed `5070`), max_active `8`
@@ -9,11 +9,11 @@
 
 | Path | torch.cuda.max_memory_allocated (MB) | nvidia-smi peak used (MB) | tokens/sec |
 |------|--------------------------------------|---------------------------|------------|
-| Contiguous (`PHASE2_KV_BACKEND=reserved`) | 3373.6 | 4997.0 | 21.42 |
-| Paged kernel (`PHASE2_KV_BACKEND=paged`) | 4224.2 | 5993.0 | 3.20 |
+| Contiguous (`PHASE2_KV_BACKEND=reserved`) | 3378.4 | 5445.0 | 10.79 |
+| Paged kernel (`PHASE2_KV_BACKEND=paged`) | 4214.2 | 6344.0 | 5.68 |
 
-- Paged peak memory (PyTorch peak): **+25.21% higher** vs contiguous (`paged_vs_contiguous_torch_peak_delta_percent`; positive = paged uses more memory)
-- Paged peak memory (nvidia-smi peak): **+19.93% higher** vs contiguous (`paged_vs_contiguous_nvidia_smi_peak_delta_percent`; positive = paged uses more memory)
+- Paged peak memory (PyTorch peak): **+24.74% higher** vs contiguous (`paged_vs_contiguous_torch_peak_delta_percent`; positive = paged uses more memory)
+- Paged peak memory (nvidia-smi peak): **+16.51% higher** vs contiguous (`paged_vs_contiguous_nvidia_smi_peak_delta_percent`; positive = paged uses more memory)
 ## Which memory metric to headline
 
 **Headline metric:** logical KV efficiency and concurrency
@@ -39,7 +39,8 @@ lower on both at moderate concurrency:
   driver-resident even when logical fill is low; repeat runs (5×) show paged
   nvidia-smi median ~5444 MB vs contiguous ~4797 MB on this workload.
 
-Throughput: see `bench/results/paged_kv_repeat.json` (contiguous median 19.91 tok/s; paged median 3.20 tok/s — check per-run `success_rate` before comparing paged).
+Throughput: see `bench/results/paged_kv_repeat.json` for repeat medians; check per-run `modes.paged.success_rate` — paged tok/s is only comparable at success_rate=1.0.
+
 ## Notes
 
 - Contiguous baseline uses explicit worst-case GPU KV reservation (`PHASE2_KV_BACKEND=reserved`) plus `StaticCache` for decode.

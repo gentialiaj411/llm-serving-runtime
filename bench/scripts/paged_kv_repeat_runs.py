@@ -76,6 +76,8 @@ def main() -> None:
 
     cont_tps = [float(r["modes"]["contiguous"]["output_tokens_per_sec"]) for r in individual]
     paged_tps = [float(r["modes"]["paged"]["output_tokens_per_sec"]) for r in individual]
+    cont_success = [float(r["modes"]["contiguous"]["success_rate"]) for r in individual]
+    paged_success = [float(r["modes"]["paged"]["success_rate"]) for r in individual]
     deltas = [p - c for p, c in zip(paged_tps, cont_tps)]
     delta_pct = [100.0 * d / c if c else 0.0 for d, c in zip(deltas, cont_tps)]
 
@@ -88,10 +90,13 @@ def main() -> None:
     paged_stats = _stats(paged_tps)
     delta_stats = _stats(deltas)
     delta_pct_stats = _stats(delta_pct)
+    cont_success_stats = _stats(cont_success)
+    paged_success_stats = _stats(paged_success)
 
     median_cont = cont_stats["median"]
     median_paged = paged_stats["median"]
     parity_within_noise = abs(median_paged - median_cont) <= max(cont_stats["stdev"], paged_stats["stdev"], 0.5)
+    reliability_gate = all(s >= 0.99 for s in paged_success) and all(s >= 0.99 for s in cont_success)
 
     timestamp = datetime.now(timezone.utc).isoformat()
     aggregate = {
@@ -105,11 +110,18 @@ def main() -> None:
             "max_active": args.max_active,
             "underlying_requests_per_run": args.requests,
         },
+        "success_rate": {
+            "contiguous": {**cont_success_stats, "samples": cont_success},
+            "paged": {**paged_success_stats, "samples": paged_success},
+            "reliability_gate_pass": reliability_gate,
+            "min_required": 0.99,
+        },
         "throughput_tokens_per_sec": {
             "contiguous": {**cont_stats, "samples": cont_tps},
             "paged": {**paged_stats, "samples": paged_tps},
             "paged_minus_contiguous": {**delta_stats, "samples": deltas},
             "paged_minus_contiguous_percent": {**delta_pct_stats, "samples": delta_pct},
+            "paged_throughput_comparable": reliability_gate,
         },
         "peak_nvidia_smi_mb": {
             "contiguous": _stats(cont_smi),
@@ -122,6 +134,7 @@ def main() -> None:
         "conclusion": {
             "throughput_at_parity_within_noise": parity_within_noise,
             "median_paged_over_contiguous_ratio": median_paged / median_cont if median_cont else 0.0,
+            "reliability_gate_pass": reliability_gate,
         },
         "individual_runs": [str(p.relative_to(ROOT)) for p in sorted(run_dir.glob("run_*.json"))],
     }
@@ -137,6 +150,15 @@ def main() -> None:
         f"- Model: `{args.model_id}`",
         f"- Aggregate UTC: `{timestamp}`",
         "",
+        "## Reliability (success_rate)",
+        "",
+        "| Path | min | median | max | gate (≥0.99 every run) |",
+        "|------|-----|--------|-----|------------------------|",
+        f"| Contiguous | {cont_success_stats['min']:.4f} | {cont_success_stats['median']:.4f} | {cont_success_stats['max']:.4f} | {'PASS' if all(s >= 0.99 for s in cont_success) else 'FAIL'} |",
+        f"| Paged | {paged_success_stats['min']:.4f} | {paged_success_stats['median']:.4f} | {paged_success_stats['max']:.4f} | {'PASS' if all(s >= 0.99 for s in paged_success) else 'FAIL'} |",
+        "",
+        f"Paged success_rate samples: `{', '.join(f'{s:.4f}' for s in paged_success)}`.",
+        "",
         "## Throughput (tokens/sec)",
         "",
         "| Path | median | stdev | min | max |",
@@ -145,8 +167,13 @@ def main() -> None:
         f"| Paged | {paged_stats['median']:.2f} | {paged_stats['stdev']:.2f} | {paged_stats['min']:.2f} | {paged_stats['max']:.2f} |",
         f"| Paged − contiguous | {delta_stats['median']:+.2f} | {delta_stats['stdev']:.2f} | {delta_stats['min']:+.2f} | {delta_stats['max']:+.2f} |",
         "",
-        f"**Conclusion:** throughput at parity within noise = **{parity_within_noise}** "
-        f"(median gap {delta_stats['median']:+.2f} tok/s, {delta_pct_stats['median']:+.1f}%).",
+        (
+            f"**Throughput comparable:** `{reliability_gate}` "
+            f"(paged tok/s is void unless every run has success_rate ≥ 0.99)."
+            if not reliability_gate
+            else f"**Reliability gate:** PASS. Throughput at parity within noise = **{parity_within_noise}** "
+            f"(median gap {delta_stats['median']:+.2f} tok/s, {delta_pct_stats['median']:+.1f}%)."
+        ),
         "",
         "## Peak nvidia-smi (MB)",
         "",
@@ -165,6 +192,8 @@ def main() -> None:
         "model_id": args.model_id,
         "rows": args.runs,
         "gpu_count": 1,
+        "reliability_gate_pass": reliability_gate,
+        "paged_success_rate_samples": paged_success,
     }
     out_manifest = ROOT / args.output_manifest
     out_manifest.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -173,9 +202,14 @@ def main() -> None:
     print(f"wrote: {out_md}")
     print(f"wrote: {out_manifest}")
     print(
+        f"success_rate paged samples: {paged_success} gate={reliability_gate}"
+    )
+    print(
         f"throughput median: contiguous {cont_stats['median']:.2f}, "
         f"paged {paged_stats['median']:.2f} (+/- {paged_stats['stdev']:.2f})"
     )
+    if not reliability_gate:
+        raise SystemExit("reliability gate failed: paged success_rate < 0.99 on at least one run")
 
 
 if __name__ == "__main__":

@@ -520,21 +520,36 @@ class TransformersBackend:
     def _paged_next_tokens_batch_for_adapter(
         self, states: list[ActiveState], max_tokens: int
     ) -> dict[str, list[str]]:
-        """Multi-step paged decode with one live BlockPagedBatchCache across all steps."""
+        """Multi-step paged decode with one live BlockPagedBatchCache across all steps.
+
+        The live batch cache must be split back onto exactly the rows that own it.
+        Continuous batching admits new requests mid-flight: those just-prefilled rows
+        are *not* in the current batch cache, so splitting against all prefilled states
+        raises IndexError and the scheduler then fails the entire ready set.
+        """
         emitted: dict[str, list[str]] = {state.req.request_id: [] for state in states}
         if max_tokens <= 0 or not states:
             return emitted
 
         batch_cache: BlockPagedBatchCache | None = None
+        batch_owners: list[ActiveState] = []
+
+        def _flush_batch_cache() -> None:
+            nonlocal batch_cache, batch_owners
+            if batch_cache is not None and len(batch_owners) > 1:
+                self._split_paged_batch_cache(batch_cache, batch_owners)
+            batch_cache = None
+            batch_owners = []
 
         for _step in range(max_tokens):
             just_prefilled: set[str] = set()
             unprefilled = [state for state in states if not state.prompt_prefilled]
             if unprefilled:
+                # Membership is about to change; sync seq_lens back before prefill.
+                _flush_batch_cache()
                 for rid, token in self._paged_prefill_groups(unprefilled).items():
                     emitted[rid].append(token)
                     just_prefilled.add(rid)
-                batch_cache = None
 
             decode_states = [
                 state
@@ -544,15 +559,18 @@ class TransformersBackend:
             if not decode_states:
                 continue
 
+            if batch_owners and (
+                len(batch_owners) != len(decode_states)
+                or any(left is not right for left, right in zip(batch_owners, decode_states))
+            ):
+                _flush_batch_cache()
+
             step_emitted, batch_cache = self._paged_decode_step(decode_states, batch_cache)
+            batch_owners = list(decode_states)
             for rid, token in step_emitted.items():
                 emitted[rid].append(token)
 
-        if batch_cache is not None:
-            decode_states = [state for state in states if state.prompt_prefilled]
-            if len(decode_states) > 1:
-                self._split_paged_batch_cache(batch_cache, decode_states)
-
+        _flush_batch_cache()
         return emitted
 
     def _paged_next_tokens_batch(
