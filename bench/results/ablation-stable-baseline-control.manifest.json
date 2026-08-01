@@ -1,0 +1,10 @@
+{
+  "run_id": "ablation-stable-baseline-control",
+  "timestamp_utc": "2026-08-01T22:40:22Z",
+  "system_under_test": "phase2",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "rows": 15,
+  "scenario_file": "bench/scenarios/ablation_decode_heavy.yaml",
+  "baseline_median_tokens_per_sec": 132.24019080297919,
+  "baseline_iqr": 7.068309449034302
+}

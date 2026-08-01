@@ -1,15 +1,19 @@
-"""Phase-4 feature ablation matrix (corrected).
+"""Stable Phase-4 ablation measurement (instrument fix).
 
-Table A — each feature in the config where it is *meaningful*
-  (paged/graphs require max_active=8; speculative uses a smaller draft).
-
-Table B — cumulative ladder (how a serving stack is actually built):
-  baseline -> +CB(8) -> +paged -> +prefix -> +graphs
+Protocol (do not claim deltas without this):
+  - Decode-heavy scenario: 128 prompt / 512 output (not 256/32).
+  - >=5 repeats per feature cell.
+  - Fresh baseline measured immediately before every feature cell.
+  - Randomized feature order each repeat.
+  - Explicit warmup discard (not timed).
+  - nvidia-smi clocks + temperature logged per measurement.
+  - Delta reported only if |median delta| exceeds baseline run-to-run IQR;
+    otherwise \"within noise\".
 
 Outputs:
   - bench/results/ablation_matrix.json
   - bench/results/ablation_matrix.md
-  - bench/results/ablation-<cell>.manifest.json
+  - bench/results/ablation-stable-*.manifest.json
 
 Reproduce:
   .venv311\\Scripts\\python.exe bench/scripts/ablation_matrix.py
@@ -21,7 +25,9 @@ import argparse
 import asyncio
 import json
 import os
+import random
 import socket
+import statistics
 import subprocess
 import sys
 import time
@@ -36,52 +42,13 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 MODEL_ID = "Qwen/Qwen2-1.5B-Instruct"
-DRAFT_MODEL_ID = "Qwen/Qwen2-0.5B-Instruct"
-AWQ_MODEL_ID = "Qwen/Qwen2-1.5B-Instruct-AWQ"
-SCENARIO_FILE = "bench/scenarios/ablation_matrix.yaml"
+SCENARIO_FILE = "bench/scenarios/ablation_decode_heavy.yaml"
 
-# Table A: isolation controls in configs where each feature is meaningful.
-TABLE_A: dict[str, dict[str, str]] = {
-    "baseline_all_off": {},
+FEATURE_CELLS: dict[str, dict[str, str]] = {
     "continuous_batching": {"PHASE2_MAX_ACTIVE": "8"},
     "paged_kv": {"PHASE2_MAX_ACTIVE": "8", "PHASE2_KV_BACKEND": "paged"},
     "prefix_cache": {"PHASE2_MAX_ACTIVE": "8", "PHASE2_PREFIX_CACHE": "1"},
-    "speculative_decoding": {
-        "PHASE2_SPECULATIVE": "1",
-        "PHASE2_SPEC_K": "4",
-        "HF_DRAFT_MODEL_ID": DRAFT_MODEL_ID,
-    },
-    "int4_awq": {
-        "PHASE2_QUANT": "int4",
-        "HF_AWQ_MODEL_ID": AWQ_MODEL_ID,
-        "HF_MODEL_ID": AWQ_MODEL_ID,
-    },
-    "cuda_graphs": {
-        "PHASE2_MAX_ACTIVE": "8",
-        "PHASE2_KV_BACKEND": "paged",
-        "PHASE2_CUDA_GRAPH": "1",
-    },
 }
-
-# Table B: cumulative ladder (publish this story).
-TABLE_B: dict[str, dict[str, str]] = {
-    "ladder_baseline": {},
-    "ladder_plus_cb": {"PHASE2_MAX_ACTIVE": "8"},
-    "ladder_plus_paged": {"PHASE2_MAX_ACTIVE": "8", "PHASE2_KV_BACKEND": "paged"},
-    "ladder_plus_prefix": {
-        "PHASE2_MAX_ACTIVE": "8",
-        "PHASE2_KV_BACKEND": "paged",
-        "PHASE2_PREFIX_CACHE": "1",
-    },
-    "ladder_plus_graphs": {
-        "PHASE2_MAX_ACTIVE": "8",
-        "PHASE2_KV_BACKEND": "paged",
-        "PHASE2_PREFIX_CACHE": "1",
-        "PHASE2_CUDA_GRAPH": "1",
-    },
-}
-
-ALL_CELLS = {**TABLE_A, **TABLE_B}
 
 
 def _free_port() -> int:
@@ -102,22 +69,44 @@ def _gpu_type() -> str:
         return "unknown"
 
 
-def _build_shared_prompt(model_id: str, target_tokens: int) -> str:
-    from transformers import AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    chunk = (
-        "You are a helpful assistant for Orcaforge ablation benchmarks. "
-        "Answer concisely and follow instructions. "
+def _nvidia_smi_snapshot() -> dict[str, Any]:
+    """Clocks + temperature for thermal confound detection."""
+    query = (
+        "timestamp,temperature.gpu,clocks.sm,clocks.mem,clocks.gr,"
+        "utilization.gpu,utilization.memory,power.draw,clocks_throttle_reasons.active"
     )
-    text = chunk
-    while True:
-        n = int(tokenizer(text, return_tensors="pt")["input_ids"].shape[1])
-        if n >= target_tokens:
-            break
-        text += chunk
-    ids = tokenizer(text, return_tensors="pt")["input_ids"][0, :target_tokens].tolist()
-    return tokenizer.decode(ids, skip_special_tokens=True)
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
+            text=True,
+            timeout=5,
+        ).strip()
+        if not out:
+            return {"ok": False, "error": "empty nvidia-smi"}
+        parts = [p.strip() for p in out.splitlines()[0].split(",")]
+        keys = [
+            "timestamp",
+            "temperature_c",
+            "clock_sm_mhz",
+            "clock_mem_mhz",
+            "clock_gr_mhz",
+            "util_gpu_pct",
+            "util_mem_pct",
+            "power_w",
+            "throttle_reasons",
+        ]
+        snap: dict[str, Any] = {"ok": True}
+        for k, v in zip(keys, parts):
+            if k in {"timestamp", "throttle_reasons"}:
+                snap[k] = v
+            else:
+                try:
+                    snap[k] = float(v)
+                except ValueError:
+                    snap[k] = v
+        return snap
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def _baseline_env() -> dict[str, str]:
@@ -136,11 +125,87 @@ def _baseline_env() -> dict[str, str]:
         "PHASE2_LORA": "0",
         "PHASE2_BATCH_DECODE_STEPS": "1",
         "PHASE2_DECODE_STEP_MS": "1",
-        "KV_TOTAL_BLOCKS": "4096",
+        "KV_TOTAL_BLOCKS": "8192",
         "KV_BLOCK_SIZE_TOKENS": "16",
         "PREFIX_CACHE_MAX_ENTRIES": "512",
         "PYTHONUNBUFFERED": "1",
     }
+
+
+def _stats(values: list[float]) -> dict[str, float]:
+    if not values:
+        return {"n": 0, "median": 0.0, "mean": 0.0, "min": 0.0, "max": 0.0, "stdev": 0.0, "iqr": 0.0}
+    xs = sorted(values)
+
+    def _pct(p: float) -> float:
+        if len(xs) == 1:
+            return float(xs[0])
+        pos = (len(xs) - 1) * p
+        lo = int(pos)
+        hi = min(lo + 1, len(xs) - 1)
+        w = pos - lo
+        return float(xs[lo] * (1.0 - w) + xs[hi] * w)
+
+    q1 = _pct(0.25)
+    q3 = _pct(0.75)
+    return {
+        "n": float(len(xs)),
+        "median": float(statistics.median(xs)),
+        "mean": float(statistics.mean(xs)),
+        "min": float(min(xs)),
+        "max": float(max(xs)),
+        "stdev": float(statistics.stdev(xs)) if len(xs) > 1 else 0.0,
+        "iqr": float(q3 - q1),
+    }
+
+
+def _build_fixed_length_prompts(model_id: str, prompt_tokens: int, request_count: int) -> list[str]:
+    """Shared-prefix prompts padded to *exact* token length so prefill can batch."""
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    chunk = (
+        "You are a helpful assistant for Orcaforge stable ablation. "
+        "Answer concisely. "
+    )
+    shared = chunk
+    while len(tokenizer(shared)["input_ids"]) < max(32, prompt_tokens // 2):
+        shared += chunk
+    shared_ids = tokenizer(shared)["input_ids"][: max(32, prompt_tokens // 2)]
+    shared_text = tokenizer.decode(shared_ids, skip_special_tokens=True)
+
+    prompts: list[str] = []
+    for i in range(request_count):
+        suffix = f" Q{i}: explain topic {i % 17} briefly."
+        # Grow/shrink pad so total tokenized length == prompt_tokens.
+        pad = ""
+        body = shared_text + suffix
+        ids = tokenizer(body)["input_ids"]
+        guard = 0
+        while len(ids) < prompt_tokens and guard < 10000:
+            pad += " pad"
+            ids = tokenizer(body + pad)["input_ids"]
+            guard += 1
+        while len(ids) > prompt_tokens and pad:
+            pad = pad[:-4] if len(pad) >= 4 else ""
+            ids = tokenizer(body + pad)["input_ids"]
+        if len(ids) != prompt_tokens:
+            # Final hard trim/pad via ids.
+            if len(ids) > prompt_tokens:
+                ids = ids[:prompt_tokens]
+            else:
+                pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
+                ids = ids + [int(pad_id)] * (prompt_tokens - len(ids))
+            text = tokenizer.decode(ids, skip_special_tokens=False)
+        else:
+            text = body + pad
+        # Verify length after decode/re-encode as worker will.
+        check = tokenizer(text)["input_ids"]
+        if len(check) != prompt_tokens:
+            # Force exact ids round-trip failure → use decode of exact ids only.
+            text = tokenizer.decode(ids[:prompt_tokens], skip_special_tokens=False)
+        prompts.append(text)
+    return prompts
 
 
 def _stop_worker(proc: subprocess.Popen[str]) -> None:
@@ -174,7 +239,7 @@ async def _one_stream(
                 "max_tokens": max_tokens,
                 "temperature": 0.0,
             },
-            timeout=600.0,
+            timeout=1200.0,
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -194,21 +259,65 @@ async def _one_stream(
     except Exception as exc:
         status = "error"
         err = str(exc)
+    return {"status": status, "output_tokens": output_tokens, "error": err}
+
+
+async def _run_timed_workload(
+    base_url: str,
+    prompts: list[str],
+    max_tokens: int,
+    concurrency: int,
+    warmup_requests: int,
+) -> dict[str, Any]:
+    """Warmup requests are executed then discarded from the timed window."""
+    async with httpx.AsyncClient(timeout=None) as client:
+        for i in range(warmup_requests):
+            await _one_stream(
+                client,
+                base_url,
+                f"warmup-{i}-{time.time_ns()}",
+                prompts[i % len(prompts)],
+                min(8, max_tokens),
+            )
+
+        sem = asyncio.Semaphore(concurrency)
+        start = time.perf_counter()
+
+        async def _guarded(i: int) -> dict[str, Any]:
+            async with sem:
+                return await _one_stream(
+                    client,
+                    base_url,
+                    f"meas-{i}-{time.time_ns()}",
+                    prompts[i % len(prompts)],
+                    max_tokens,
+                )
+
+        results = await asyncio.gather(*[_guarded(i) for i in range(len(prompts))])
+        elapsed = max(1e-6, time.perf_counter() - start)
+
+    completed = sum(1 for r in results if r["status"] == "completed")
+    output_tokens = sum(int(r["output_tokens"]) for r in results)
     return {
-        "request_id": request_id,
-        "status": status,
+        "request_count": len(prompts),
+        "warmup_requests_discarded": warmup_requests,
+        "concurrency": concurrency,
+        "completed_requests": completed,
+        "success_rate": completed / max(1, len(prompts)),
         "output_tokens": output_tokens,
-        "error": err,
+        "tokens_per_sec_output": output_tokens / elapsed,
+        "duration_s": elapsed,
+        "sample_errors": [r["error"] for r in results if r["error"]][:3],
     }
 
 
-def _start_worker(cell: str, overrides: dict[str, str]) -> tuple[subprocess.Popen[str], int, str | None]:
+def _start_worker(label: str, overrides: dict[str, str]) -> tuple[subprocess.Popen[str], int, str | None]:
     port = _free_port()
     env = os.environ.copy()
     env.pop("HF_MODEL_ID", None)
     env.update(_baseline_env())
     env.update(overrides)
-    stderr_path = ROOT / "bench" / "results" / f"_ablation_{cell}.stderr.log"
+    stderr_path = ROOT / "bench" / "results" / f"_ablation_stable_{label}.stderr.log"
     stderr_f = open(stderr_path, "w", encoding="utf-8")
     proc = subprocess.Popen(
         [
@@ -229,358 +338,157 @@ def _start_worker(cell: str, overrides: dict[str, str]) -> tuple[subprocess.Pope
         text=True,
         env=env,
     )
-    health = f"http://127.0.0.1:{port}/healthz"
     deadline = time.time() + 360.0
     while time.time() < deadline:
         try:
-            if httpx.get(health, timeout=2.0).status_code == 200:
-                break
+            if httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=2.0).status_code == 200:
+                stderr_f.flush()
+                return proc, port, None
         except Exception:
             pass
         if proc.poll() is not None:
             stderr_f.flush()
             stderr_f.close()
             err = stderr_path.read_text(encoding="utf-8", errors="replace")[-2000:]
-            return proc, port, f"worker exited during startup: {err}"
+            return proc, port, f"worker exited: {err}"
         time.sleep(0.5)
-    else:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=10)
-        stderr_f.flush()
-        stderr_f.close()
-        err = stderr_path.read_text(encoding="utf-8", errors="replace")[-2000:]
-        return proc, port, f"worker health timeout: {err}"
-
-    async def _warmup() -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=None) as client:
-            return await _one_stream(
-                client,
-                f"http://127.0.0.1:{port}",
-                f"ablation-warmup-{time.time_ns()}",
-                "warmup",
-                1,
-            )
-
-    try:
-        warmup = asyncio.run(_warmup())
-    except Exception as exc:
-        warmup = {"status": "error", "error": str(exc), "output_tokens": 0}
-    if warmup.get("status") != "completed":
-        err = str(warmup.get("error") or warmup.get("status") or "warmup failed")
-        tail = stderr_path.read_text(encoding="utf-8", errors="replace")[-1500:]
-        _stop_worker(proc)
-        stderr_f.flush()
-        stderr_f.close()
-        return proc, port, f"model warmup failed: {err}\n{tail}"
+    _stop_worker(proc)
     stderr_f.flush()
-    return proc, port, None
+    stderr_f.close()
+    return proc, port, "worker health timeout"
 
 
-async def _run_workload(
-    base_url: str,
-    system_prompt: str,
-    request_count: int,
+def _measure(
+    label: str,
+    overrides: dict[str, str],
+    prompts: list[str],
     max_tokens: int,
     concurrency: int,
+    warmup_requests: int,
+    idle_s: float,
 ) -> dict[str, Any]:
-    sem = asyncio.Semaphore(concurrency)
-    start = time.perf_counter()
-    async with httpx.AsyncClient(timeout=None) as client:
-
-        async def _guarded(i: int) -> dict[str, Any]:
-            async with sem:
-                suffix = f" User question {i}: explain topic {i % 17} in one sentence."
-                return await _one_stream(
-                    client,
-                    base_url,
-                    f"ablation-{i}-{time.time_ns()}",
-                    system_prompt + suffix,
-                    max_tokens,
-                )
-
-        results = await asyncio.gather(*[_guarded(i) for i in range(request_count)])
-    elapsed = max(1e-6, time.perf_counter() - start)
-    completed = sum(1 for r in results if r["status"] == "completed")
-    output_tokens = sum(int(r["output_tokens"]) for r in results)
-    return {
-        "request_count": request_count,
-        "concurrency": concurrency,
-        "completed_requests": completed,
-        "success_rate": completed / max(1, request_count),
-        "output_tokens": output_tokens,
-        "tokens_per_sec_output": output_tokens / elapsed,
-        "duration_s": elapsed,
-        "sample_errors": [r["error"] for r in results if r["error"]][:3],
-    }
-
-
-def _write_manifest(
-    cell: str,
-    overrides: dict[str, str],
-    metrics: dict[str, Any],
-    ts: str,
-    gpu: str,
-    table: str,
-) -> Path:
-    run_id = f"ablation-{cell}"
-    path = ROOT / "bench" / "results" / f"{run_id}.manifest.json"
-    void = float(metrics.get("success_rate", 0.0)) < 0.99
-    model = AWQ_MODEL_ID if cell == "int4_awq" else MODEL_ID
-    payload = {
-        "run_id": run_id,
-        "timestamp_utc": ts,
-        "system_under_test": "phase2",
-        "model_id": model,
-        "gpu_type": gpu,
-        "gpu_count": 1,
-        "scenario_file": SCENARIO_FILE,
-        "scenario_id": "ablation_shared_prefix",
-        "feature_cell": cell,
-        "ablation_table": table,
-        "feature_env": {**_baseline_env(), **overrides},
-        "rows": 1,
-        "inference_mode": "real_model_inference",
-        "tokens_per_sec_output": metrics.get("tokens_per_sec_output"),
-        "success_rate": metrics.get("success_rate"),
-        "throughput_void_lt_99pct_success": void,
-        "error": metrics.get("error"),
-        "fairness_notes": {
-            "ablation": (
-                "Table A: feature in meaningful config; "
-                "Table B: cumulative ladder. Paged/graphs require max_active>=batch."
-            ),
-            "phase2_proxy_reference": "bench/results/paged_kv_launch_profile.meta.json B8 ~91.8 tok/s proxy",
-        },
-    }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return path
-
-
-def _run_cell(
-    cell: str,
-    overrides: dict[str, str],
-    system_prompt: str,
-    request_count: int,
-    max_tokens: int,
-    concurrency: int,
-) -> dict[str, Any]:
-    print(f"==> cell {cell}", flush=True)
-    proc, port, start_err = _start_worker(cell, overrides)
-    if start_err:
+    if idle_s > 0:
+        time.sleep(idle_s)
+    smi_before = _nvidia_smi_snapshot()
+    proc, port, err = _start_worker(label, overrides)
+    if err:
         _stop_worker(proc)
         return {
-            "feature": cell,
+            "label": label,
             "status": "failed_startup",
-            "error": start_err,
+            "error": err,
             "success_rate": 0.0,
             "tokens_per_sec_output": 0.0,
-            "request_count": request_count,
-            "concurrency": concurrency,
-            "completed_requests": 0,
-            "output_tokens": 0,
-            "duration_s": 0.0,
+            "smi_before": smi_before,
+            "smi_after": _nvidia_smi_snapshot(),
             "env_overrides": overrides,
         }
-    base_url = f"http://127.0.0.1:{port}"
     try:
+        # Model-load compile warmup inside worker via discarded warmups.
         metrics = asyncio.run(
-            _run_workload(base_url, system_prompt, request_count, max_tokens, concurrency)
+            _run_timed_workload(
+                f"http://127.0.0.1:{port}",
+                prompts,
+                max_tokens,
+                concurrency,
+                warmup_requests,
+            )
         )
         try:
-            worker_metrics = httpx.get(f"{base_url}/metrics", timeout=10.0).json()
+            worker_metrics = httpx.get(f"http://127.0.0.1:{port}/metrics", timeout=10.0).json()
         except Exception:
             worker_metrics = {}
-        metrics["worker_metrics_subset"] = {
-            k: worker_metrics.get(k)
-            for k in (
-                "prefix_cache_hit_rate",
-                "prefix_cache_hits",
-                "prefix_cache_misses",
-                "prefix_cache_inserts",
-                "speculative_acceptance_rate",
-                "continuous_batches_total",
-                "kv_backend",
-                "max_batch_size",
-                "peak_active_requests",
-            )
-        }
-        metrics["feature"] = cell
-        metrics["env_overrides"] = overrides
-        metrics["status"] = "ok" if metrics["success_rate"] >= 0.99 else "low_success"
+        smi_after = _nvidia_smi_snapshot()
+        metrics.update(
+            {
+                "label": label,
+                "status": "ok" if metrics["success_rate"] >= 0.99 else "low_success",
+                "smi_before": smi_before,
+                "smi_after": smi_after,
+                "env_overrides": overrides,
+                "worker_metrics_subset": {
+                    k: worker_metrics.get(k)
+                    for k in (
+                        "prefix_cache_hits",
+                        "prefix_cache_misses",
+                        "prefix_cache_hit_rate",
+                        "continuous_batches_total",
+                        "max_batch_size",
+                        "peak_active_requests",
+                        "kv_backend",
+                    )
+                },
+            }
+        )
         return metrics
     except Exception as exc:
         return {
-            "feature": cell,
+            "label": label,
             "status": "failed_run",
             "error": str(exc),
             "success_rate": 0.0,
             "tokens_per_sec_output": 0.0,
-            "request_count": request_count,
-            "concurrency": concurrency,
-            "completed_requests": 0,
-            "output_tokens": 0,
-            "duration_s": 0.0,
+            "smi_before": smi_before,
+            "smi_after": _nvidia_smi_snapshot(),
             "env_overrides": overrides,
         }
     finally:
         _stop_worker(proc)
 
 
-def _delta_map(cells: dict[str, Any], baseline_key: str) -> dict[str, Any]:
-    base_tps = float(cells.get(baseline_key, {}).get("tokens_per_sec_output") or 0.0)
-    out: dict[str, Any] = {}
-    for name, cell in cells.items():
-        tps = float(cell.get("tokens_per_sec_output") or 0.0)
-        success = float(cell.get("success_rate") or 0.0)
-        void = success < 0.99
-        if name == baseline_key:
-            out[name] = {"delta_pct": 0.0, "void": void, "tokens_per_sec_output": tps}
-        elif void or base_tps <= 0:
-            out[name] = {"delta_pct": None, "void": True, "tokens_per_sec_output": tps}
-        else:
-            out[name] = {
-                "delta_pct": 100.0 * (tps / base_tps - 1.0),
-                "void": False,
-                "tokens_per_sec_output": tps,
-                "ratio_vs_baseline": tps / base_tps,
-            }
-    return out
-
-
-def _ladder_step_deltas(order: list[str], cells: dict[str, Any]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    prev_name: str | None = None
-    prev_tps: float | None = None
-    for name in order:
-        cell = cells[name]
-        tps = float(cell.get("tokens_per_sec_output") or 0.0)
-        success = float(cell.get("success_rate") or 0.0)
-        void = success < 0.99
-        step = None
-        if prev_tps is not None and prev_tps > 0 and not void:
-            step = 100.0 * (tps / prev_tps - 1.0)
-        rows.append(
-            {
-                "cell": name,
-                "tokens_per_sec_output": tps,
-                "success_rate": success,
-                "void": void,
-                "delta_vs_previous_pct": step,
-                "previous": prev_name,
-            }
-        )
-        prev_name = name
-        prev_tps = tps if not void else prev_tps
-    return rows
-
-
 def _write_md(path: Path, payload: dict[str, Any]) -> None:
+    bstats = payload["baseline_control"]
     lines = [
-        "# Feature ablation matrix (corrected)",
+        "# Stable feature ablation (instrument-fixed)",
         "",
         f"- Model: `{payload['model_id']}`",
-        f"- Draft (speculative): `{payload.get('draft_model_id')}`",
         f"- GPU: `{payload['gpu_type']}`",
         f"- Scenario: `{payload['scenario_file']}` (`{payload['scenario_id']}`)",
-        f"- Shared prefix tokens: `{payload['shared_prefix_tokens']}`",
-        f"- Requests: `{payload['request_count']}`, concurrency `{payload['concurrency']}`, "
-        f"decode `{payload['max_output_tokens']}` tokens",
+        f"- Prompt/decode tokens: `{payload['prompt_tokens']}` / `{payload['max_output_tokens']}`",
+        f"- Requests/concurrency/warmups: `{payload['request_count']}` / "
+        f"`{payload['concurrency']}` / `{payload['warmup_requests']}`",
+        f"- Repeats: `{payload['repeats']}`, seed `{payload['seed']}`",
         f"- Generated: `{payload['timestamp_utc']}`",
         "",
-        "Throughput at success_rate < 0.99 is void.",
+        "## Control: interleaved baseline noise",
         "",
-        "## Table B — cumulative ladder (publish this)",
+        f"- n=`{int(bstats['n'])}` median=`{bstats['median']:.2f}` tok/s "
+        f"IQR=`{bstats['iqr']:.2f}` stdev=`{bstats['stdev']:.2f}` "
+        f"range=`[{bstats['min']:.2f}, {bstats['max']:.2f}]`",
+        f"- Decision threshold: report a feature delta only if "
+        f"|median Δ%| exceeds baseline IQR% "
+        f"(≈ `{payload['decision_threshold_pct']:.1f}`% of baseline median).",
         "",
-        "| Step | tok/s | Δ vs previous | Δ vs baseline | success | notes |",
-        "|------|------:|--------------:|--------------:|--------:|-------|",
+        "## Feature cells (paired vs immediate baseline)",
+        "",
+        "| Feature | median tok/s | median Δ% vs paired baseline | vs noise | success med | notes |",
+        "|---------|-------------:|-----------------------------:|----------|------------:|-------|",
     ]
-    base_tps = float(payload["table_b"]["baseline_tokens_per_sec_output"] or 0.0)
-    for row in payload["table_b"]["step_deltas"]:
-        name = row["cell"]
-        cell = payload["table_b"]["cells"][name]
-        tps = float(row["tokens_per_sec_output"])
-        success = float(row["success_rate"])
-        void = bool(row["void"])
-        d_prev = row["delta_vs_previous_pct"]
-        d_prev_s = "—" if d_prev is None else f"{d_prev:+.1f}%"
-        if name.endswith("baseline") or void or base_tps <= 0:
-            d_base_s = "—" if not void else "void"
-        else:
-            d_base_s = f"{100.0 * (tps / base_tps - 1.0):+.1f}%"
-        wm = cell.get("worker_metrics_subset") or {}
-        note = cell.get("error") or ""
-        if "prefix" in name and not note:
-            note = f"hits={wm.get('prefix_cache_hits')} miss={wm.get('prefix_cache_misses')}"
-        if "paged" in name and not note:
-            note = f"max_batch={wm.get('max_batch_size')} peak_active={wm.get('peak_active_requests')}"
-        if isinstance(note, str) and len(note) > 70:
-            note = note[:67] + "..."
-        tps_s = f"{tps:.2f}" if not void else f"{tps:.2f} (void)"
+    for name in payload["feature_order"]:
+        row = payload["features"][name]
+        med = row["tps_stats"]["median"]
+        dmed = row["delta_pct_stats"]["median"]
+        verdict = row["verdict"]
+        succ = row["success_stats"]["median"]
+        note = row.get("note") or ""
         lines.append(
-            f"| `{name}` | {tps_s} | {d_prev_s} | {d_base_s} | {success:.2f} | {note} |"
+            f"| `{name}` | {med:.2f} | {dmed:+.1f}% | **{verdict}** | {succ:.2f} | {note} |"
         )
-
     lines.extend(
         [
             "",
-            "## Table A — meaningful one-at-a-time (isolation control)",
+            "## Thermal / clock summary",
             "",
-            "Caveat: paged KV / CUDA graphs are measured at `PHASE2_MAX_ACTIVE=8` "
-            "because batching is required for those features to be meaningful.",
+            f"- Baseline SM clock median MHz: `{payload['thermal']['baseline_sm_mhz_median']}`",
+            f"- Feature SM clock median MHz: `{payload['thermal']['feature_sm_mhz_median']}`",
+            f"- Baseline temp median C: `{payload['thermal']['baseline_temp_c_median']}`",
+            f"- Feature temp median C: `{payload['thermal']['feature_temp_c_median']}`",
+            f"- Thermal confound suspected: `{payload['thermal']['confound_suspected']}`",
             "",
-            "| Feature | tok/s | Δ vs baseline | success | status | notes |",
-            "|---------|------:|--------------:|--------:|--------|-------|",
-        ]
-    )
-    for name in payload["table_a"]["feature_order"]:
-        cell = payload["table_a"]["cells"][name]
-        tps = float(cell.get("tokens_per_sec_output") or 0.0)
-        success = float(cell.get("success_rate") or 0.0)
-        void = success < 0.99
-        d = payload["table_a"]["delta_vs_baseline_pct"].get(name, {})
-        if name == "baseline_all_off":
-            delta_s = "—"
-        elif d.get("void") or d.get("delta_pct") is None:
-            delta_s = "void"
-        else:
-            delta_s = f"{float(d['delta_pct']):+.1f}%"
-        note = cell.get("error") or ""
-        wm = cell.get("worker_metrics_subset") or {}
-        if name == "prefix_cache" and not note:
-            note = f"hits={wm.get('prefix_cache_hits')} miss={wm.get('prefix_cache_misses')}"
-        if name == "paged_kv" and not note:
-            note = f"max_batch={wm.get('max_batch_size')} peak_active={wm.get('peak_active_requests')}"
-        if name == "cuda_graphs" and not note:
-            dvp = payload["table_a"].get("cuda_graphs_delta_vs_paged_kv_pct")
-            note = f"vs paged_kv: {dvp:+.1f}%" if dvp is not None else "vs paged_kv: n/a"
-        if name == "speculative_decoding" and not note:
-            note = f"accept={wm.get('speculative_acceptance_rate')}"
-        if isinstance(note, str) and len(note) > 70:
-            note = note[:67] + "..."
-        tps_s = f"{tps:.2f}" if not void else f"{tps:.2f} (void)"
-        lines.append(
-            f"| `{name}` | {tps_s} | {delta_s} | {success:.2f} | {cell.get('status')} | {note} |"
-        )
-
-    phase2 = payload.get("phase2_cross_check") or {}
-    lines.extend(
-        [
+            "Prior single-shot Phase-4 tables are **not reproducible** under this protocol "
+            "and must not be used in README claims.",
             "",
-            "## Phase 2 cross-check",
-            "",
-            f"- Phase 2 batched paged B=8 proxy: `{phase2.get('phase2_b8_tok_per_s_proxy')}` "
-            f"(`paged_kv_launch_profile.meta.json`)",
-            f"- Table A `paged_kv` harness tok/s: `{phase2.get('table_a_paged_kv_tok_per_s')}`",
-            f"- Ratio harness/proxy: `{phase2.get('harness_over_proxy_ratio')}`",
-            f"- Verdict: `{phase2.get('verdict')}`",
-            "",
-            "Per-cell manifests: `bench/results/ablation-<feature>.manifest.json`",
-            "",
-            "Validate: `python bench/scripts/validate_manifests.py`",
+            "Artifact: `bench/results/ablation_matrix.json`",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -588,150 +496,196 @@ def _write_md(path: Path, payload: dict[str, Any]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--requests", type=int, default=24)
+    parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--requests", type=int, default=8)
     parser.add_argument("--concurrency", type=int, default=8)
-    parser.add_argument("--max-output-tokens", type=int, default=32)
-    parser.add_argument("--shared-prefix-tokens", type=int, default=256)
-    parser.add_argument(
-        "--tables",
-        default="A,B",
-        help="Comma-separated: A (isolation), B (ladder), or both",
-    )
+    parser.add_argument("--prompt-tokens", type=int, default=128)
+    parser.add_argument("--max-output-tokens", type=int, default=512)
+    parser.add_argument("--warmup-requests", type=int, default=2)
+    parser.add_argument("--idle-s", type=float, default=20.0, help="Idle between measurements (thermal)")
+    parser.add_argument("--seed", type=int, default=5070)
     parser.add_argument(
         "--features",
-        default="",
-        help="Optional explicit cell list (overrides --tables)",
+        default=",".join(FEATURE_CELLS.keys()),
+        help="Comma-separated feature cells",
     )
     parser.add_argument("--output-json", default="bench/results/ablation_matrix.json")
     parser.add_argument("--output-md", default="bench/results/ablation_matrix.md")
     args = parser.parse_args()
 
     scenario = yaml.safe_load((ROOT / SCENARIO_FILE).read_text(encoding="utf-8"))["scenarios"][0]
-    concurrency = args.concurrency or int(scenario["concurrency"][0])
-    max_out = args.max_output_tokens or int(scenario["max_output_tokens"])
-    prefix_toks = args.shared_prefix_tokens or int(scenario["prompt_tokens"])
+    features = [f.strip() for f in args.features.split(",") if f.strip()]
+    for f in features:
+        if f not in FEATURE_CELLS:
+            raise SystemExit(f"unknown feature: {f}")
 
-    if args.features.strip():
-        selected = [f.strip() for f in args.features.split(",") if f.strip()]
-    else:
-        selected = []
-        tables = {t.strip().upper() for t in args.tables.split(",") if t.strip()}
-        if "A" in tables:
-            selected.extend(TABLE_A.keys())
-        if "B" in tables:
-            selected.extend(TABLE_B.keys())
-    for f in selected:
-        if f not in ALL_CELLS:
-            raise SystemExit(f"unknown cell: {f}")
-
-    print("Building shared prefix prompt...", flush=True)
-    system_prompt = _build_shared_prompt(MODEL_ID, prefix_toks)
+    rng = random.Random(args.seed)
+    print("Building fixed-length prompts...", flush=True)
+    prompts = _build_fixed_length_prompts(MODEL_ID, args.prompt_tokens, args.requests)
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     gpu = _gpu_type()
 
-    cells: dict[str, Any] = {}
-    for cell in selected:
-        overrides = ALL_CELLS[cell]
-        table = "B" if cell in TABLE_B else "A"
-        result = _run_cell(cell, overrides, system_prompt, args.requests, max_out, concurrency)
-        cells[cell] = result
-        _write_manifest(cell, overrides, result, ts, gpu, table)
-        print(
-            f"    {cell}: tok/s={float(result.get('tokens_per_sec_output') or 0):.2f} "
-            f"success={float(result.get('success_rate') or 0):.2f} status={result.get('status')}",
-            flush=True,
-        )
+    pairs: list[dict[str, Any]] = []
+    baseline_tps: list[float] = []
+    baseline_smi: list[dict[str, Any]] = []
 
-    table_a_cells = {k: cells[k] for k in TABLE_A if k in cells}
-    table_b_cells = {k: cells[k] for k in TABLE_B if k in cells}
-    table_a_order = [k for k in TABLE_A if k in cells]
-    table_b_order = [k for k in TABLE_B if k in cells]
+    for rep in range(args.repeats):
+        order = features[:]
+        rng.shuffle(order)
+        print(f"=== repeat {rep + 1}/{args.repeats} order={order}", flush=True)
+        for feat in order:
+            print(f"  -> baseline before {feat}", flush=True)
+            b = _measure(
+                f"baseline_r{rep}_{feat}",
+                {},
+                prompts,
+                args.max_output_tokens,
+                args.concurrency,
+                args.warmup_requests,
+                args.idle_s,
+            )
+            print(
+                f"     baseline tok/s={float(b.get('tokens_per_sec_output') or 0):.2f} "
+                f"success={float(b.get('success_rate') or 0):.2f} "
+                f"temp={((b.get('smi_after') or {}).get('temperature_c'))} "
+                f"sm={(b.get('smi_after') or {}).get('clock_sm_mhz')}",
+                flush=True,
+            )
+            print(f"  -> feature {feat}", flush=True)
+            c = _measure(
+                f"{feat}_r{rep}",
+                FEATURE_CELLS[feat],
+                prompts,
+                args.max_output_tokens,
+                args.concurrency,
+                args.warmup_requests,
+                args.idle_s,
+            )
+            print(
+                f"     {feat} tok/s={float(c.get('tokens_per_sec_output') or 0):.2f} "
+                f"success={float(c.get('success_rate') or 0):.2f} "
+                f"temp={((c.get('smi_after') or {}).get('temperature_c'))} "
+                f"sm={(c.get('smi_after') or {}).get('clock_sm_mhz')}",
+                flush=True,
+            )
+            b_tps = float(b.get("tokens_per_sec_output") or 0.0)
+            c_tps = float(c.get("tokens_per_sec_output") or 0.0)
+            b_ok = float(b.get("success_rate") or 0.0) >= 0.99
+            c_ok = float(c.get("success_rate") or 0.0) >= 0.99
+            if b_ok:
+                baseline_tps.append(b_tps)
+                baseline_smi.append(b.get("smi_after") or {})
+            delta_pct = None
+            if b_ok and c_ok and b_tps > 0:
+                delta_pct = 100.0 * (c_tps / b_tps - 1.0)
+            pairs.append(
+                {
+                    "repeat": rep,
+                    "feature": feat,
+                    "baseline": b,
+                    "feature_run": c,
+                    "delta_pct": delta_pct,
+                    "void": not (b_ok and c_ok),
+                }
+            )
 
-    a_deltas = _delta_map(table_a_cells, "baseline_all_off") if table_a_cells else {}
-    b_base = float(table_b_cells.get("ladder_baseline", {}).get("tokens_per_sec_output") or 0.0)
-    b_steps = _ladder_step_deltas(table_b_order, table_b_cells) if table_b_cells else []
+    bstats = _stats(baseline_tps)
+    threshold_pct = (100.0 * bstats["iqr"] / bstats["median"]) if bstats["median"] > 0 else 1e9
 
-    paged_tps = float(table_a_cells.get("paged_kv", {}).get("tokens_per_sec_output") or 0.0)
-    cuda_tps = float(table_a_cells.get("cuda_graphs", {}).get("tokens_per_sec_output") or 0.0)
-    cuda_vs_paged = None
-    if (
-        paged_tps > 0
-        and float(table_a_cells.get("cuda_graphs", {}).get("success_rate") or 0) >= 0.99
-        and float(table_a_cells.get("paged_kv", {}).get("success_rate") or 0) >= 0.99
-    ):
-        cuda_vs_paged = 100.0 * (cuda_tps / paged_tps - 1.0)
+    feature_summaries: dict[str, Any] = {}
+    for feat in features:
+        feat_pairs = [p for p in pairs if p["feature"] == feat and not p["void"] and p["delta_pct"] is not None]
+        tps_vals = [float(p["feature_run"]["tokens_per_sec_output"]) for p in feat_pairs]
+        delta_vals = [float(p["delta_pct"]) for p in feat_pairs]
+        succ_vals = [float(p["feature_run"]["success_rate"]) for p in feat_pairs]
+        tstats = _stats(tps_vals)
+        dstats = _stats(delta_vals)
+        sstats = _stats(succ_vals)
+        med_abs = abs(dstats["median"]) if delta_vals else 0.0
+        if not delta_vals:
+            verdict = "no_valid_pairs"
+        elif med_abs <= threshold_pct:
+            verdict = "within_noise"
+        elif dstats["median"] > 0:
+            verdict = "above_noise_gain"
+        else:
+            verdict = "above_noise_loss"
+        note = ""
+        if feat == "prefix_cache" and feat_pairs:
+            hits = [
+                (p["feature_run"].get("worker_metrics_subset") or {}).get("prefix_cache_hits")
+                for p in feat_pairs
+            ]
+            note = f"prefix_hits_samples={hits}"
+        feature_summaries[feat] = {
+            "tps_stats": tstats,
+            "delta_pct_stats": dstats,
+            "success_stats": sstats,
+            "verdict": verdict,
+            "note": note,
+            "pairs_valid": len(feat_pairs),
+            "pairs_total": sum(1 for p in pairs if p["feature"] == feat),
+        }
 
-    phase2_proxy = 91.80450932044542
-    try:
-        meta = json.loads(
-            (ROOT / "bench/results/paged_kv_launch_profile.meta.json").read_text(encoding="utf-8")
-        )
-        phase2_proxy = float(meta["scaling"]["paged"]["b8_tok_per_s_proxy"])
-    except Exception:
-        pass
+    def _med(vals: list[float]) -> float | None:
+        return float(statistics.median(vals)) if vals else None
 
-    harness_over_proxy = (paged_tps / phase2_proxy) if phase2_proxy > 0 and paged_tps > 0 else None
-    if paged_tps <= 0:
-        verdict = "paged_kv cell missing or failed"
-    elif float(table_a_cells.get("paged_kv", {}).get("success_rate") or 0) < 0.99:
-        verdict = "paged_kv throughput void (<99% success)"
-    elif harness_over_proxy is not None and harness_over_proxy >= 0.5:
-        verdict = "harness paged@ma=8 is in the same ballpark as Phase 2 proxy (not a pure overhead tax)"
-    else:
-        verdict = "harness paged@ma=8 far below Phase 2 proxy — investigate before README claims"
+    b_sm = [float(s["clock_sm_mhz"]) for s in baseline_smi if isinstance(s.get("clock_sm_mhz"), (int, float))]
+    b_temp = [float(s["temperature_c"]) for s in baseline_smi if isinstance(s.get("temperature_c"), (int, float))]
+    f_sm: list[float] = []
+    f_temp: list[float] = []
+    for p in pairs:
+        s = p["feature_run"].get("smi_after") or {}
+        if isinstance(s.get("clock_sm_mhz"), (int, float)):
+            f_sm.append(float(s["clock_sm_mhz"]))
+        if isinstance(s.get("temperature_c"), (int, float)):
+            f_temp.append(float(s["temperature_c"]))
+
+    sm_spread = 0.0
+    if b_sm and f_sm and _med(b_sm):
+        sm_spread = abs((_med(f_sm) or 0) - (_med(b_sm) or 0)) / max(_med(b_sm) or 1.0, 1.0)
+    confound = bool(bstats["iqr"] > 0.15 * max(bstats["median"], 1e-6) or sm_spread >= 0.15)
 
     payload = {
-        "artifact_type": "feature_ablation_matrix_corrected",
+        "artifact_type": "feature_ablation_matrix_stable",
         "timestamp_utc": ts,
         "model_id": MODEL_ID,
-        "draft_model_id": DRAFT_MODEL_ID,
-        "awq_model_id": AWQ_MODEL_ID,
         "gpu_type": gpu,
         "scenario_file": SCENARIO_FILE,
         "scenario_id": scenario["id"],
-        "shared_prefix_tokens": prefix_toks,
+        "prompt_tokens": args.prompt_tokens,
+        "max_output_tokens": args.max_output_tokens,
         "request_count": args.requests,
-        "concurrency": concurrency,
-        "max_output_tokens": max_out,
+        "concurrency": args.concurrency,
+        "warmup_requests": args.warmup_requests,
+        "repeats": args.repeats,
+        "seed": args.seed,
+        "idle_s_between_measurements": args.idle_s,
         "measurement": "measured_on_gpu",
         "methodology": {
-            "table_a": "Feature in meaningful config (paged/graphs at max_active=8)",
-            "table_b": "Cumulative ladder: baseline -> +CB -> +paged -> +prefix -> +graphs",
-            "prior_misconfig": (
-                "First Phase-4 run measured paged/graphs at max_active=1 and used "
-                "same-model draft; those cells are superseded by this artifact."
-            ),
+            "paired_baseline_before_each_cell": True,
+            "randomized_feature_order_per_repeat": True,
+            "warmup_discarded": True,
+            "report_rule": "delta only if |median Δ%| > baseline IQR% of median baseline",
+            "supersedes": "single-shot ablation tables from 38788c0/204bc73",
         },
-        "table_a": {
-            "feature_order": table_a_order,
-            "cells": table_a_cells,
-            "delta_vs_baseline_pct": a_deltas,
-            "baseline_tokens_per_sec_output": float(
-                table_a_cells.get("baseline_all_off", {}).get("tokens_per_sec_output") or 0.0
-            ),
-            "cuda_graphs_delta_vs_paged_kv_pct": cuda_vs_paged,
+        "baseline_control": bstats,
+        "decision_threshold_pct": threshold_pct,
+        "feature_order": features,
+        "features": feature_summaries,
+        "pairs": pairs,
+        "thermal": {
+            "baseline_sm_mhz_median": _med(b_sm),
+            "feature_sm_mhz_median": _med(f_sm),
+            "baseline_temp_c_median": _med(b_temp),
+            "feature_temp_c_median": _med(f_temp),
+            "sm_clock_relative_spread": sm_spread,
+            "confound_suspected": confound,
         },
-        "table_b": {
-            "feature_order": table_b_order,
-            "cells": table_b_cells,
-            "step_deltas": b_steps,
-            "baseline_tokens_per_sec_output": b_base,
-        },
-        "phase2_cross_check": {
-            "phase2_b8_tok_per_s_proxy": phase2_proxy,
-            "table_a_paged_kv_tok_per_s": paged_tps,
-            "harness_over_proxy_ratio": harness_over_proxy,
-            "verdict": verdict,
-        },
-        "notes": [
-            "Do not cite the superseded max_active=1 paged/graph cells from the first Phase-4 commit.",
-            "Prefix cache registers intermediate trie nodes; batch prefill paths now call insert.",
-            "Table A prefix_cache (dynamic+ma=8) is the valid prefix measurement (hits>0).",
-            "Table B ladder_plus_prefix/graphs are VOID: prefix hit restores DynamicCache into paged path (BlockPagedCache required).",
-            "Phase 2 B=8 proxy (~91.8 tok/s) does NOT reproduce in this harness (~23 tok/s paged@ma=8); do not README a 3.8x claim.",
-            "INT4 remains void on .venv311 without autoawq.",
-            "cuda_graphs vs paged delta is not an HF-capture win (PHASE2_CUDA_GRAPH_TRY_HF=0); treat as noise unless capture lands.",
-        ],
+        "honest_finding": (
+            "Prior Phase-4 single-shot numbers are not reproducible; "
+            "only above-noise verdicts in this artifact are claim-eligible."
+        ),
     }
 
     out_json = ROOT / args.output_json
@@ -739,9 +693,46 @@ def main() -> None:
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     _write_md(out_md, payload)
+
+    # Schema-minimal manifests for validator.
+    for feat in features:
+        man = {
+            "run_id": f"ablation-stable-{feat}",
+            "timestamp_utc": ts,
+            "system_under_test": "phase2",
+            "model_id": MODEL_ID,
+            "rows": int(feature_summaries[feat]["pairs_valid"]),
+            "scenario_file": SCENARIO_FILE,
+            "verdict": feature_summaries[feat]["verdict"],
+            "median_tokens_per_sec": feature_summaries[feat]["tps_stats"]["median"],
+            "median_delta_pct": feature_summaries[feat]["delta_pct_stats"]["median"],
+        }
+        (ROOT / "bench" / "results" / f"{man['run_id']}.manifest.json").write_text(
+            json.dumps(man, indent=2), encoding="utf-8"
+        )
+    base_man = {
+        "run_id": "ablation-stable-baseline-control",
+        "timestamp_utc": ts,
+        "system_under_test": "phase2",
+        "model_id": MODEL_ID,
+        "rows": int(bstats["n"]),
+        "scenario_file": SCENARIO_FILE,
+        "baseline_median_tokens_per_sec": bstats["median"],
+        "baseline_iqr": bstats["iqr"],
+    }
+    (ROOT / "bench" / "results" / "ablation-stable-baseline-control.manifest.json").write_text(
+        json.dumps(base_man, indent=2), encoding="utf-8"
+    )
+
     print(f"wrote: {out_json}")
     print(f"wrote: {out_md}")
-    print(f"phase2 cross-check: {verdict}", flush=True)
+    print(f"baseline median={bstats['median']:.2f} IQR={bstats['iqr']:.2f} threshold%={threshold_pct:.1f}")
+    for feat in features:
+        fs = feature_summaries[feat]
+        print(
+            f"  {feat}: median_delta%={fs['delta_pct_stats']['median']:+.1f} verdict={fs['verdict']}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

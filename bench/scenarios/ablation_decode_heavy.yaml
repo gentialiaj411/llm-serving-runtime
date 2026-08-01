@@ -1,0 +1,9 @@
+version: "1"
+# Decode-heavy scenario for serving-path ablations (prefill:decode ~1:4).
+# Prefill-dominated 256/32 cannot surface decode-path wins (Amdahl).
+scenarios:
+  - id: ablation_decode_heavy
+    concurrency: [8]
+    prompt_tokens: 128
+    max_output_tokens: 512
+    notes: "Fixed-length prompts (padded) so paged prefill can batch; discard warmups in harness."

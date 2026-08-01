@@ -1,46 +1,34 @@
-# Feature ablation matrix (corrected)
+# Stable feature ablation (instrument-fixed)
 
 - Model: `Qwen/Qwen2-1.5B-Instruct`
-- Draft (speculative): `Qwen/Qwen2-0.5B-Instruct`
 - GPU: `NVIDIA GeForce RTX 5070 Laptop GPU`
-- Scenario: `bench/scenarios/ablation_matrix.yaml` (`ablation_shared_prefix`)
-- Shared prefix tokens: `256`
-- Requests: `24`, concurrency `8`, decode `32` tokens
-- Generated: `2026-08-01T22:27:55Z`
+- Scenario: `bench/scenarios/ablation_decode_heavy.yaml` (`ablation_decode_heavy`)
+- Prompt/decode tokens: `128` / `512`
+- Requests/concurrency/warmups: `8` / `8` / `2`
+- Repeats: `5`, seed `5070`
+- Generated: `2026-08-01T22:40:22Z`
 
-Throughput at success_rate < 0.99 is void.
+## Control: interleaved baseline noise
 
-## Table B — cumulative ladder (publish this)
+- n=`15` median=`132.24` tok/s IQR=`7.07` stdev=`34.15` range=`[108.39, 226.03]`
+- Decision threshold: report a feature delta only if |median Δ%| exceeds baseline IQR% (≈ `5.3`% of baseline median).
 
-| Step | tok/s | Δ vs previous | Δ vs baseline | success | notes |
-|------|------:|--------------:|--------------:|--------:|-------|
-| `ladder_baseline` | 87.26 | — | — | 1.00 |  |
-| `ladder_plus_cb` | 63.81 | -26.9% | -26.9% | 1.00 |  |
-| `ladder_plus_paged` | 23.11 | -63.8% | -73.5% | 1.00 | max_batch=8 peak_active=8 |
-| `ladder_plus_prefix` | 43.90 (void) | — | void | 0.33 | hits=16 miss=9 |
-| `ladder_plus_graphs` | 2.84 (void) | — | void | 0.00 |  |
+## Feature cells (paired vs immediate baseline)
 
-## Table A — meaningful one-at-a-time (isolation control)
+| Feature | median tok/s | median Δ% vs paired baseline | vs noise | success med | notes |
+|---------|-------------:|-----------------------------:|----------|------------:|-------|
+| `continuous_batching` | 136.35 | -0.3% | **within_noise** | 1.00 |  |
+| `paged_kv` | 66.45 | -50.5% | **above_noise_loss** | 1.00 |  |
+| `prefix_cache` | 97.80 | -28.9% | **above_noise_loss** | 1.00 | prefix_hits_samples=[9, 9, 9, 9, 9] |
 
-Caveat: paged KV / CUDA graphs are measured at `PHASE2_MAX_ACTIVE=8` because batching is required for those features to be meaningful.
+## Thermal / clock summary
 
-| Feature | tok/s | Δ vs baseline | success | status | notes |
-|---------|------:|--------------:|--------:|--------|-------|
-| `baseline_all_off` | 68.61 | — | 1.00 | ok |  |
-| `continuous_batching` | 79.54 | +15.9% | 1.00 | ok |  |
-| `paged_kv` | 23.09 | -66.3% | 1.00 | ok | max_batch=8 peak_active=8 |
-| `prefix_cache` | 79.07 | +15.2% | 1.00 | ok | hits=18 miss=7 |
-| `speculative_decoding` | 12.70 | -81.5% | 1.00 | ok | accept=0.5383615084525357 |
-| `int4_awq` | 0.00 (void) | void | 0.00 | failed_startup | model warmup failed: AWQ runtime unavailable for PHASE2_QUANT=int4:... |
-| `cuda_graphs` | 27.62 | -59.7% | 1.00 | ok | vs paged_kv: +19.6% |
+- Baseline SM clock median MHz: `2887.0`
+- Feature SM clock median MHz: `2895.0`
+- Baseline temp median C: `64.0`
+- Feature temp median C: `63.0`
+- Thermal confound suspected: `False`
 
-## Phase 2 cross-check
+Prior single-shot Phase-4 tables are **not reproducible** under this protocol and must not be used in README claims.
 
-- Phase 2 batched paged B=8 proxy: `91.80450932044542` (`paged_kv_launch_profile.meta.json`)
-- Table A `paged_kv` harness tok/s: `23.08985110397588`
-- Ratio harness/proxy: `0.25151107799487615`
-- Verdict: `harness paged@ma=8 far below Phase 2 proxy — investigate before README claims`
-
-Per-cell manifests: `bench/results/ablation-<feature>.manifest.json`
-
-Validate: `python bench/scripts/validate_manifests.py`
+Artifact: `bench/results/ablation_matrix.json`

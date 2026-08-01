@@ -207,6 +207,10 @@ class TransformersBackend:
                 self.model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype)
                 self.model.to(device)
                 self.model.eval()
+        if getattr(self.tokenizer, "pad_token_id", None) is None:
+            eos = getattr(self.tokenizer, "eos_token_id", None)
+            if eos is not None:
+                self.tokenizer.pad_token_id = eos
         self.bytes_per_elem = torch.empty((), dtype=dtype).element_size()
         self.bytes_per_token = self._bytes_per_token()
         self.kv_backend = os.getenv("PHASE2_KV_BACKEND", "dynamic").strip().lower()
@@ -400,6 +404,104 @@ class TransformersBackend:
         assert state.input_ids is not None
         return [int(x) for x in state.input_ids[0].tolist()]
 
+    @staticmethod
+    def _next_pow2_len(n: int) -> int:
+        """Bucket variable-length prefills to the next power of two for batched pad."""
+        if n <= 1:
+            return 1
+        return 1 << (int(n) - 1).bit_length()
+
+    def _pad_token_id(self) -> int:
+        pad = getattr(self.tokenizer, "pad_token_id", None)
+        if pad is not None:
+            return int(pad)
+        eos = getattr(self.tokenizer, "eos_token_id", None)
+        return int(eos) if eos is not None else 0
+
+    def _left_pad_prefill_batch(
+        self, states: list[ActiveState], target_len: int
+    ) -> tuple[Any, Any]:
+        """Left-pad to target_len so logits[:, -1] is the last real token."""
+        assert states
+        pad_id = self._pad_token_id()
+        rows: list[Any] = []
+        masks: list[Any] = []
+        for state in states:
+            assert state.input_ids is not None
+            ids = state.input_ids
+            length = int(ids.shape[1])
+            if length > target_len:
+                raise ValueError(f"prefill length {length} exceeds bucket {target_len}")
+            pad = target_len - length
+            if pad:
+                pad_t = self.torch.full((1, pad), pad_id, device=ids.device, dtype=ids.dtype)
+                ids_p = self.torch.cat([pad_t, ids], dim=1)
+                mask = self.torch.cat(
+                    [
+                        self.torch.zeros((1, pad), device=ids.device, dtype=self.torch.long),
+                        self.torch.ones((1, length), device=ids.device, dtype=self.torch.long),
+                    ],
+                    dim=1,
+                )
+            else:
+                ids_p = ids
+                mask = self.torch.ones((1, length), device=ids.device, dtype=self.torch.long)
+            rows.append(ids_p)
+            masks.append(mask)
+        return self.torch.cat(rows, dim=0), self.torch.cat(masks, dim=0)
+
+    def _crop_past_keep_suffix(self, past_key_values: Any, real_len: int) -> Any:
+        """After left-padded prefill, keep only the last real_len KV positions."""
+        if past_key_values is None or real_len <= 0:
+            return past_key_values
+        from runtime.phase2.prefix_cache import truncate_past_key_values
+
+        # If already exact length, truncate_past keeps a prefix — wrong for left-pad.
+        # Explicitly slice the suffix instead.
+        try:
+            from transformers.cache_utils import Cache, DynamicCache
+        except Exception:
+            Cache = None  # type: ignore[misc, assignment]
+            DynamicCache = None  # type: ignore[misc, assignment]
+
+        if Cache is not None and isinstance(past_key_values, Cache):
+            assert DynamicCache is not None
+            config = getattr(past_key_values, "config", None)
+            new_cache = DynamicCache(config=config) if config is not None else DynamicCache()
+            for layer_idx, layer in enumerate(past_key_values.layers):
+                if not getattr(layer, "is_initialized", False):
+                    continue
+                keys = layer.keys
+                values = layer.values
+                if keys is None or values is None or keys.numel() == 0:
+                    continue
+                seq = int(keys.shape[-2])
+                start = max(0, seq - real_len)
+                new_cache.update(keys[..., start:, :].clone(), values[..., start:, :].clone(), layer_idx)
+            return new_cache
+
+        if hasattr(past_key_values, "to_legacy_cache"):
+            legacy = past_key_values.to_legacy_cache()
+        else:
+            legacy = past_key_values
+        if not isinstance(legacy, (tuple, list)):
+            # Opaque / paged extracts: best-effort prefix truncate (may no-op).
+            return truncate_past_key_values(past_key_values, real_len)
+        cropped = []
+        for layer in legacy:
+            if not isinstance(layer, (tuple, list)):
+                return past_key_values
+            layer_out = []
+            for tensor in layer:
+                if tensor is None:
+                    layer_out.append(None)
+                else:
+                    seq = int(tensor.shape[-2])
+                    start = max(0, seq - real_len)
+                    layer_out.append(tensor[..., start:, :].clone())
+            cropped.append(tuple(layer_out))
+        return self._normalize_past_key_values(tuple(cropped))
+
     def clone_past_key_values(self, past_key_values: Any) -> Any:
         if past_key_values is None:
             return None
@@ -524,7 +626,12 @@ class TransformersBackend:
         return persistent
 
     def _paged_prefill_groups(self, states: list[ActiveState]) -> dict[str, str]:
-        """Prefill unprefilled rows; emit first token from prefill logits."""
+        """Prefill unprefilled rows; emit first token from prefill logits.
+
+        Variable-length prompts are bucketed to the next power-of-two length and
+        left-padded so they can share one batched forward (exact-length grouping
+        previously forced size-1 prefills on shared-prefix + unique-suffix loads).
+        """
         emitted: dict[str, str] = {}
         if not states:
             return emitted
@@ -532,43 +639,85 @@ class TransformersBackend:
         prefill_groups: dict[int, list[ActiveState]] = collections.defaultdict(list)
         for state in states:
             assert state.input_ids is not None
-            prefill_groups[int(state.input_ids.shape[1])].append(state)
+            # Partial prefix-hit continues stay unbucketed (already have past).
+            if int(getattr(state, "prefix_matched_tokens", 0) or 0) > 0:
+                prefill_groups[-int(state.input_ids.shape[1])].append(state)
+            else:
+                bucket = self._next_pow2_len(int(state.input_ids.shape[1]))
+                prefill_groups[bucket].append(state)
 
         with self.torch.no_grad():
-            for group in prefill_groups.values():
-                input_ids = self.torch.cat([state.input_ids for state in group], dim=0)
-                attention_mask = None
-                if all(state.attention_mask is not None for state in group):
-                    attention_mask = self.torch.cat([state.attention_mask for state in group], dim=0)
-                if len(group) == 1:
-                    past = group[0].past_key_values
+            for bucket, group in prefill_groups.items():
+                if bucket < 0:
+                    # Negative key: partial prefix continues — one-at-a-time.
+                    for state in group:
+                        self._prefill_target(state)
+                        assert state.next_logits is not None
+                        next_id = int(state.next_logits.argmax(dim=-1).item())
+                        state.last_token_id = next_id
+                        assert state.generated_token_ids is not None
+                        state.generated_token_ids.append(next_id)
+                        emitted[state.req.request_id] = self.tokenizer.decode(
+                            [next_id], skip_special_tokens=True
+                        )
+                    continue
+
+                # Paged KV cannot yet crop left-pad positions out of BlockPagedCache.
+                # Only pad-batch when lengths already match; otherwise sequential.
+                lengths = {int(s.input_ids.shape[1]) for s in group}
+                subgroups: list[list[ActiveState]]
+                if len(lengths) == 1:
+                    subgroups = [group]
                 else:
-                    past = self._concat_paged_caches(group)
-                outputs = self.model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    past_key_values=past,
-                    use_cache=True,
-                )
-                if isinstance(outputs.past_key_values, BlockPagedBatchCache):
-                    batch_cache = outputs.past_key_values
-                    past_values = [batch_cache.extract_cache(i) for i in range(len(group))]
-                elif len(group) == 1:
-                    past_values = [self._normalize_past_key_values(outputs.past_key_values)]
-                else:
-                    raise TypeError("expected BlockPagedBatchCache from batched paged prefill")
-                logits = outputs.logits[:, -1, :]
-                for idx, state in enumerate(group):
-                    state.past_key_values = past_values[idx]
-                    state.next_logits = logits[idx : idx + 1]
-                    state.prefix_matched_tokens = int(state.input_ids.shape[1])
-                    state.prompt_prefilled = True
-                    _try_insert_prefix_cache(state)
-                    next_id = int(logits.argmax(dim=-1).tolist()[idx])
-                    state.last_token_id = next_id
-                    assert state.generated_token_ids is not None
-                    state.generated_token_ids.append(next_id)
-                    emitted[state.req.request_id] = self.tokenizer.decode([next_id], skip_special_tokens=True)
+                    subgroups = [[s] for s in group]
+
+                for sub in subgroups:
+                    target = bucket if len(sub) > 1 or int(sub[0].input_ids.shape[1]) == bucket else int(
+                        sub[0].input_ids.shape[1]
+                    )
+                    # Exact-length batch: cat; single unequal: no pad needed at native length.
+                    if len(sub) == 1 and int(sub[0].input_ids.shape[1]) != bucket:
+                        input_ids = sub[0].input_ids
+                        attention_mask = sub[0].attention_mask
+                        past = sub[0].past_key_values
+                    else:
+                        input_ids, attention_mask = self._left_pad_prefill_batch(sub, target)
+                        past = None
+                        if len(sub) == 1:
+                            past = sub[0].past_key_values
+                        elif any(s.past_key_values is not None for s in sub):
+                            past = self._concat_paged_caches(sub)
+                    outputs = self.model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        past_key_values=past,
+                        use_cache=True,
+                    )
+                    if isinstance(outputs.past_key_values, BlockPagedBatchCache):
+                        batch_cache = outputs.past_key_values
+                        past_values = [batch_cache.extract_cache(i) for i in range(len(sub))]
+                    elif len(sub) == 1:
+                        past_values = [self._normalize_past_key_values(outputs.past_key_values)]
+                    else:
+                        raise TypeError("expected BlockPagedBatchCache from batched paged prefill")
+                    logits = outputs.logits[:, -1, :]
+                    for idx, state in enumerate(sub):
+                        real_len = int(state.input_ids.shape[1])
+                        cropped = past_values[idx]
+                        if int(input_ids.shape[1]) != real_len:
+                            cropped = self._crop_past_keep_suffix(cropped, real_len)
+                        state.past_key_values = cropped
+                        state.next_logits = logits[idx : idx + 1]
+                        state.prefix_matched_tokens = real_len
+                        state.prompt_prefilled = True
+                        _try_insert_prefix_cache(state)
+                        next_id = int(logits.argmax(dim=-1).tolist()[idx])
+                        state.last_token_id = next_id
+                        assert state.generated_token_ids is not None
+                        state.generated_token_ids.append(next_id)
+                        emitted[state.req.request_id] = self.tokenizer.decode(
+                            [next_id], skip_special_tokens=True
+                        )
         return emitted
 
     def _paged_decode_step(
@@ -749,42 +898,39 @@ class TransformersBackend:
             assert state.input_ids is not None
             if state.prompt_prefilled:
                 decode_groups[self._cache_length(state)].append(state)
+            elif int(getattr(state, "prefix_matched_tokens", 0) or 0) > 0:
+                prefill_groups[-int(state.input_ids.shape[1])].append(state)
             else:
-                prefill_groups[int(state.input_ids.shape[1])].append(state)
+                prefill_groups[self._next_pow2_len(int(state.input_ids.shape[1]))].append(state)
 
         with self.torch.no_grad():
-            for group in prefill_groups.values():
-                partial = [s for s in group if int(getattr(s, "prefix_matched_tokens", 0) or 0) > 0]
-                fresh = [s for s in group if int(getattr(s, "prefix_matched_tokens", 0) or 0) <= 0]
-                for state in partial:
-                    # Continue prefill after a shared-prefix cache hit.
-                    self._prefill_target(state)
-                    assert state.next_logits is not None
-                    next_id = int(state.next_logits.argmax(dim=-1).item())
-                    state.last_token_id = next_id
-                    assert state.generated_token_ids is not None
-                    state.generated_token_ids.append(next_id)
-                    emitted[state.req.request_id] = self.tokenizer.decode(
-                        [next_id], skip_special_tokens=True
-                    )
-                if not fresh:
+            for bucket, group in prefill_groups.items():
+                if bucket < 0:
+                    for state in group:
+                        self._prefill_target(state)
+                        assert state.next_logits is not None
+                        next_id = int(state.next_logits.argmax(dim=-1).item())
+                        state.last_token_id = next_id
+                        assert state.generated_token_ids is not None
+                        state.generated_token_ids.append(next_id)
+                        emitted[state.req.request_id] = self.tokenizer.decode(
+                            [next_id], skip_special_tokens=True
+                        )
                     continue
-                input_ids = self.torch.cat([state.input_ids for state in fresh], dim=0)
-                attention_mask = None
-                if all(state.attention_mask is not None for state in fresh):
-                    attention_mask = self.torch.cat([state.attention_mask for state in fresh], dim=0)
+                input_ids, attention_mask = self._left_pad_prefill_batch(group, bucket)
                 outputs = self.model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     past_key_values=None,
                     use_cache=True,
                 )
-                past_values = self._split_past_key_values(outputs.past_key_values, len(fresh))
+                past_values = self._split_past_key_values(outputs.past_key_values, len(group))
                 logits = outputs.logits[:, -1, :]
-                for idx, state in enumerate(fresh):
-                    state.past_key_values = past_values[idx]
+                for idx, state in enumerate(group):
+                    real_len = int(state.input_ids.shape[1])
+                    state.past_key_values = self._crop_past_keep_suffix(past_values[idx], real_len)
                     state.next_logits = logits[idx : idx + 1]
-                    state.prefix_matched_tokens = int(state.input_ids.shape[1])
+                    state.prefix_matched_tokens = real_len
                     state.prompt_prefilled = True
                     _try_insert_prefix_cache(state)
                     next_id = int(logits.argmax(dim=-1).tolist()[idx])
