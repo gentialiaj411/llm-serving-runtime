@@ -472,8 +472,10 @@ def _paged_attention_decode_batched_triton(
         raise ValueError("Triton paged decode expects q_len=1")
     block_size = k_cache.shape[2]
     max_logical_blocks = int(block_tables.shape[1])
+    capturing = bool(query.is_cuda and torch.cuda.is_current_stream_capturing())
 
-    if batch_size == 1:
+    # Avoid .item() host syncs while a CUDA graph is capturing.
+    if (not capturing) and batch_size == 1:
         table = block_tables[0, :max_logical_blocks]
         seq_len = int(seq_lens[0].item())
         num_logical = min(max_logical_blocks, math.ceil(seq_len / block_size))
@@ -487,11 +489,14 @@ def _paged_attention_decode_batched_triton(
             num_kv_groups,
         )
 
-    max_seq = int(seq_lens.max().item())
+    if capturing:
+        max_seq = max_logical_blocks * block_size
+    else:
+        max_seq = int(seq_lens.max().item())
     num_splits = _effective_num_splits(max_logical_blocks, max_seq)
     block_d = triton.next_power_of_2(head_dim)
 
-    if num_splits == 1:
+    if num_splits == 1 or capturing:
         out_buf = _direct_out_buffer(query.device, batch_size, num_heads, head_dim)
         grid = (batch_size, num_heads)
         _paged_attn_decode_direct_batched_kernel[grid](
@@ -525,7 +530,9 @@ def _paged_attention_decode_batched_triton(
             scaling,
             num_warps=4,
         )
-        return out_buf.to(query.dtype).unsqueeze(2)
+        if out_buf.dtype != query.dtype:
+            out_buf = out_buf.to(query.dtype)
+        return out_buf.unsqueeze(2)
 
     # Long-seq multi-split: fall back to per-row launches (rare in batched decode).
     outs = []

@@ -197,18 +197,32 @@ class GpuKVBlockPool:
         assert self._v_pool is not None
 
         device = self.device
-        block_tables = block_tables.to(device=device, dtype=torch.int32)
-        start_positions = start_positions.to(device=device, dtype=torch.int64)
-        row_idx = torch.arange(batch_size, device=device)
+        capturing = bool(
+            device.type == "cuda"
+            and torch.cuda.is_available()
+            and torch.cuda.is_current_stream_capturing()
+        )
+        if not capturing:
+            block_tables = block_tables.to(device=device, dtype=torch.int32)
+            start_positions = start_positions.to(device=device, dtype=torch.int64)
+        if (
+            not hasattr(self, "_write_row_idx")
+            or self._write_row_idx is None
+            or int(self._write_row_idx.numel()) < batch_size
+            or self._write_row_idx.device != device
+        ):
+            self._write_row_idx = torch.arange(batch_size, device=device, dtype=torch.long)
+        row_idx = self._write_row_idx[:batch_size]
 
         for t in range(kv_len):
             pos = start_positions + t
             logical = torch.div(pos, block_size, rounding_mode="floor")
             offset = pos % block_size
-            if logical.max().item() >= block_tables.shape[1]:
+            if not capturing and int(logical.max().item()) >= block_tables.shape[1]:
                 raise IndexError("block table underrun during batched write")
             physical = block_tables[row_idx, logical]
-            self._touch_blocks(physical)
+            if not capturing:
+                self._touch_blocks(physical)
             self._k_pool[physical, layer_idx, :, offset, :] = key_states[:, :, t, :]
             self._v_pool[physical, layer_idx, :, offset, :] = value_states[:, :, t, :]
 

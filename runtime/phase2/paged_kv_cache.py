@@ -126,17 +126,35 @@ class BlockPagedBatchLayer(CacheLayerMixin):
         parent = self._parent
         kv_len = int(key_states.shape[-2])
         row_seq_lens = self._row_lengths(parent)
-        start_positions = row_seq_lens.clone()
-        parent.pool.write_tokens_batch(
-            self.layer_idx,
-            parent.block_tables,
-            start_positions,
-            key_states,
-            value_states,
-        )
-        self._row_seq_lens = row_seq_lens + kv_len
-        if self.layer_idx == 0:
-            parent.seq_lens = self._row_seq_lens.clone()
+        graph_safe = bool(getattr(parent, "_graph_safe", False))
+        if graph_safe:
+            # Avoid tensor reallocations so CUDA graph replay stays valid.
+            if not hasattr(parent, "_start_pos_buf") or parent._start_pos_buf.shape != row_seq_lens.shape:
+                parent._start_pos_buf = row_seq_lens.clone()
+            start_positions = parent._start_pos_buf
+            start_positions.copy_(row_seq_lens)
+            parent.pool.write_tokens_batch(
+                self.layer_idx,
+                parent.block_tables,
+                start_positions,
+                key_states,
+                value_states,
+            )
+            self._row_seq_lens.add_(kv_len)
+            if self.layer_idx == 0:
+                parent.seq_lens.copy_(self._row_seq_lens)
+        else:
+            start_positions = row_seq_lens.clone()
+            parent.pool.write_tokens_batch(
+                self.layer_idx,
+                parent.block_tables,
+                start_positions,
+                key_states,
+                value_states,
+            )
+            self._row_seq_lens = row_seq_lens + kv_len
+            if self.layer_idx == 0:
+                parent.seq_lens = self._row_seq_lens.clone()
 
         if kv_len == 1:
             meta = PagedDecodeBatchMetadata(
@@ -152,9 +170,19 @@ class BlockPagedBatchLayer(CacheLayerMixin):
         return parent.pool.gather_layer_batch(self.layer_idx, parent.block_tables, parent.seq_lens)
 
     def get_mask_sizes(self, query_length: int) -> tuple[int, int]:
+        if getattr(self._parent, "_graph_safe", False):
+            cached = getattr(self._parent, "_cached_seq_len_py", None)
+            if cached is not None:
+                return int(cached) + query_length, 0
+            return self.get_max_cache_shape() + query_length, 0
         return int(self._row_seq_lens.max().item()) + query_length, 0
 
     def get_seq_length(self) -> int:
+        if getattr(self._parent, "_graph_safe", False):
+            cached = getattr(self._parent, "_cached_seq_len_py", None)
+            if cached is not None:
+                return int(cached)
+            return self.get_max_cache_shape()
         return int(self._row_seq_lens.max().item())
 
     def get_max_cache_shape(self) -> int:

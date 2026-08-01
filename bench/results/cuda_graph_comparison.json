@@ -1,0 +1,54 @@
+{
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "metric_note": "cuda_op_proxy is TorchDispatchMode CUDA aten-op count (CUPTI often unavailable)",
+  "linear_cudagraph_smoke": {
+    "ok": true,
+    "max_abs_err": 0.0,
+    "batch": 4,
+    "dim": 64
+  },
+  "hf_paged_graph_captured": false,
+  "rows": [
+    {
+      "mode": "eager",
+      "PHASE2_CUDA_GRAPH": false,
+      "batch_size": 2,
+      "decode_steps": 12,
+      "tokens": 24,
+      "wall_s": 3.754015899990918,
+      "tok_per_s": 6.393153529279954,
+      "cuda_op_proxy_total": 66788,
+      "cuda_op_proxy_per_token": 2782.8333333333335,
+      "graph_stats": null
+    },
+    {
+      "mode": "cuda_graph",
+      "PHASE2_CUDA_GRAPH": true,
+      "batch_size": 2,
+      "decode_steps": 12,
+      "tokens": 24,
+      "wall_s": 8.600749600009294,
+      "tok_per_s": 2.790454450618358,
+      "cuda_op_proxy_total": 66788,
+      "cuda_op_proxy_per_token": 2782.8333333333335,
+      "graph_stats": {
+        "enabled": true,
+        "try_hf": false,
+        "disabled": false,
+        "disable_reason": "",
+        "buckets": []
+      }
+    }
+  ],
+  "delta": {
+    "tok_per_s": -3.6026990786615958,
+    "tok_per_s_ratio": 0.43647543232590574,
+    "ops_per_token_ratio": 1.0
+  },
+  "verdict": {
+    "linear_smoke_ok": true,
+    "hf_capture_ok": false,
+    "parity_path": "eager_fallback",
+    "throughput_improved": false
+  }
+}

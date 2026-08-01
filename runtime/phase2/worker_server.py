@@ -232,9 +232,19 @@ class TransformersBackend:
             # Persistent continuous-batch slots (survive admission/completion).
             self._paged_persistent: BlockPagedBatchCache | None = None
             self._paged_persistent_capacity = 0
+            self._cuda_graph_manager = None
+            if os.getenv("PHASE2_CUDA_GRAPH", "0").strip() == "1" and self.torch.cuda.is_available():
+                from runtime.phase2.cuda_graph_decode import CudaGraphDecodeManager
+
+                self._cuda_graph_manager = CudaGraphDecodeManager(
+                    model=self.model,
+                    device=self.torch.device(self.device),
+                    warmup_steps=int(os.getenv("PHASE2_CUDA_GRAPH_WARMUP", "3")),
+                )
         else:
             self._paged_persistent = None
             self._paged_persistent_capacity = 0
+            self._cuda_graph_manager = None
         self.lora_enabled = os.getenv("PHASE2_LORA", "0") == "1" and quant_mode != "int4" and not self.speculative
         self.lora_manager: LoRAManager | None = None
         if self.lora_enabled:
@@ -553,39 +563,50 @@ class TransformersBackend:
         input_ids = self.torch.tensor([[state.last_token_id] for state in decode_states], device=self.device)
 
         with self.torch.no_grad():
-            if len(decode_states) == 1:
-                state = decode_states[0]
-                outputs = self.model(
-                    input_ids=input_ids,
-                    past_key_values=state.past_key_values,
-                    use_cache=True,
-                )
-                new_cache = self._normalize_past_key_values(outputs.past_key_values)
-                state.past_key_values = new_cache
-                if isinstance(new_cache, BlockPagedCache):
-                    persistent = self._bind_states_to_persistent([state])
-                    batch_cache = persistent
-                else:
-                    batch_cache = getattr(self, "_paged_persistent", None)
-            else:
-                persistent = self._bind_states_to_persistent(decode_states)
-                dense, slots = persistent.dense_active_cache(
-                    [state.req.request_id for state in decode_states]
-                )
-                outputs = self.model(
-                    input_ids=input_ids,
-                    past_key_values=dense,
-                    use_cache=True,
-                )
-                if isinstance(outputs.past_key_values, BlockPagedBatchCache):
-                    dense = outputs.past_key_values
-                persistent.write_back_dense(dense, slots)
-                for idx, state in enumerate(decode_states):
-                    state.past_key_values = persistent.extract_cache(slots[idx])
-                batch_cache = persistent
+            persistent = self._bind_states_to_persistent(decode_states)
+            batch_cache = persistent
+            logits_row = None
 
-            logits = outputs.logits[:, -1, :]
-            next_ids = logits.argmax(dim=-1).tolist()
+            graph_mgr = getattr(self, "_cuda_graph_manager", None)
+            if graph_mgr is not None and len(decode_states) >= 1:
+                logits_row = graph_mgr.try_decode(
+                    persistent=persistent,
+                    decode_states=decode_states,
+                    input_ids=input_ids,
+                )
+
+            if logits_row is None:
+                if len(decode_states) == 1:
+                    state = decode_states[0]
+                    outputs = self.model(
+                        input_ids=input_ids,
+                        past_key_values=state.past_key_values,
+                        use_cache=True,
+                    )
+                    new_cache = self._normalize_past_key_values(outputs.past_key_values)
+                    state.past_key_values = new_cache
+                    if isinstance(new_cache, BlockPagedCache):
+                        persistent = self._bind_states_to_persistent([state])
+                        batch_cache = persistent
+                    logits_row = outputs.logits[:, -1, :]
+                else:
+                    dense, slots = persistent.dense_active_cache(
+                        [state.req.request_id for state in decode_states]
+                    )
+                    outputs = self.model(
+                        input_ids=input_ids,
+                        past_key_values=dense,
+                        use_cache=True,
+                    )
+                    if isinstance(outputs.past_key_values, BlockPagedBatchCache):
+                        dense = outputs.past_key_values
+                    persistent.write_back_dense(dense, slots)
+                    for idx, state in enumerate(decode_states):
+                        state.past_key_values = persistent.extract_cache(slots[idx])
+                    batch_cache = persistent
+                    logits_row = outputs.logits[:, -1, :]
+
+            next_ids = logits_row.argmax(dim=-1).tolist()
             for idx, state in enumerate(decode_states):
                 next_id = int(next_ids[idx])
                 state.last_token_id = next_id
