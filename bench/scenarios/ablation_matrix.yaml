@@ -1,0 +1,8 @@
+version: "1"
+# Fixed scenario for Phase-4 feature ablation (one feature on vs all-off).
+scenarios:
+  - id: ablation_shared_prefix
+    concurrency: [8]
+    prompt_tokens: 256
+    max_output_tokens: 32
+    notes: "Shared-prefix decode load; client concurrency 8."

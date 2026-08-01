@@ -1,0 +1,197 @@
+{
+  "artifact_type": "feature_ablation_matrix",
+  "timestamp_utc": "2026-08-01T21:42:34Z",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "awq_model_id": "Qwen/Qwen2-1.5B-Instruct-AWQ",
+  "gpu_type": "NVIDIA GeForce RTX 5070 Laptop GPU",
+  "scenario_file": "bench/scenarios/ablation_matrix.yaml",
+  "scenario_id": "ablation_shared_prefix",
+  "shared_prefix_tokens": 256,
+  "request_count": 24,
+  "concurrency": 8,
+  "max_output_tokens": 32,
+  "measurement": "measured_on_gpu",
+  "feature_order": [
+    "baseline_all_off",
+    "continuous_batching",
+    "paged_kv",
+    "prefix_cache",
+    "speculative_decoding",
+    "int4_awq",
+    "cuda_graphs"
+  ],
+  "cells": {
+    "baseline_all_off": {
+      "request_count": 24,
+      "concurrency": 8,
+      "completed_requests": 24,
+      "success_rate": 1.0,
+      "output_tokens": 768,
+      "tokens_per_sec_output": 23.870294563141105,
+      "duration_s": 32.17388029998983,
+      "sample_errors": [],
+      "worker_metrics_subset": {
+        "prefix_cache_hit_rate": null,
+        "prefix_cache_hits": null,
+        "prefix_cache_misses": null,
+        "speculative_acceptance_rate": 0.0,
+        "continuous_batches_total": 106,
+        "kv_backend": "dynamic"
+      },
+      "feature": "baseline_all_off",
+      "status": "ok"
+    },
+    "continuous_batching": {
+      "request_count": 24,
+      "concurrency": 8,
+      "completed_requests": 24,
+      "success_rate": 1.0,
+      "output_tokens": 768,
+      "tokens_per_sec_output": 17.36751600294799,
+      "duration_s": 44.22048610000638,
+      "sample_errors": [],
+      "worker_metrics_subset": {
+        "prefix_cache_hit_rate": null,
+        "prefix_cache_hits": null,
+        "prefix_cache_misses": null,
+        "speculative_acceptance_rate": 0.0,
+        "continuous_batches_total": 107,
+        "kv_backend": "dynamic"
+      },
+      "feature": "continuous_batching",
+      "status": "ok"
+    },
+    "paged_kv": {
+      "request_count": 24,
+      "concurrency": 8,
+      "completed_requests": 24,
+      "success_rate": 1.0,
+      "output_tokens": 768,
+      "tokens_per_sec_output": 7.737085945475714,
+      "duration_s": 99.26217770000221,
+      "sample_errors": [],
+      "worker_metrics_subset": {
+        "prefix_cache_hit_rate": null,
+        "prefix_cache_hits": null,
+        "prefix_cache_misses": null,
+        "speculative_acceptance_rate": 0.0,
+        "continuous_batches_total": 105,
+        "kv_backend": "paged"
+      },
+      "feature": "paged_kv",
+      "status": "ok"
+    },
+    "prefix_cache": {
+      "request_count": 24,
+      "concurrency": 8,
+      "completed_requests": 24,
+      "success_rate": 1.0,
+      "output_tokens": 768,
+      "tokens_per_sec_output": 18.342489005825684,
+      "duration_s": 41.869999200003804,
+      "sample_errors": [],
+      "worker_metrics_subset": {
+        "prefix_cache_hit_rate": 0.0,
+        "prefix_cache_hits": 0,
+        "prefix_cache_misses": 25,
+        "speculative_acceptance_rate": 0.0,
+        "continuous_batches_total": 107,
+        "kv_backend": "dynamic"
+      },
+      "feature": "prefix_cache",
+      "status": "ok"
+    },
+    "speculative_decoding": {
+      "request_count": 24,
+      "concurrency": 8,
+      "completed_requests": 24,
+      "success_rate": 1.0,
+      "output_tokens": 768,
+      "tokens_per_sec_output": 6.9780206414870944,
+      "duration_s": 110.05986359999224,
+      "sample_errors": [],
+      "worker_metrics_subset": {
+        "prefix_cache_hit_rate": null,
+        "prefix_cache_hits": null,
+        "prefix_cache_misses": null,
+        "speculative_acceptance_rate": 0.9986996098829649,
+        "continuous_batches_total": 0,
+        "kv_backend": "dynamic"
+      },
+      "feature": "speculative_decoding",
+      "status": "ok"
+    },
+    "int4_awq": {
+      "feature": "int4_awq",
+      "status": "failed_startup",
+      "error": "model warmup failed: AWQ runtime unavailable for PHASE2_QUANT=int4: No module named 'awq'\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n",
+      "success_rate": 0.0,
+      "tokens_per_sec_output": 0.0,
+      "request_count": 24,
+      "concurrency": 8,
+      "completed_requests": 0,
+      "output_tokens": 0,
+      "duration_s": 0.0
+    },
+    "cuda_graphs": {
+      "request_count": 24,
+      "concurrency": 8,
+      "completed_requests": 24,
+      "success_rate": 1.0,
+      "output_tokens": 768,
+      "tokens_per_sec_output": 7.37277613107951,
+      "duration_s": 104.16700390000187,
+      "sample_errors": [],
+      "worker_metrics_subset": {
+        "prefix_cache_hit_rate": null,
+        "prefix_cache_hits": null,
+        "prefix_cache_misses": null,
+        "speculative_acceptance_rate": 0.0,
+        "continuous_batches_total": 105,
+        "kv_backend": "paged"
+      },
+      "feature": "cuda_graphs",
+      "status": "ok"
+    }
+  },
+  "delta_vs_baseline_pct": {
+    "baseline_all_off": {
+      "delta_pct": 0.0,
+      "void": false
+    },
+    "continuous_batching": {
+      "delta_pct": -27.242137892316865,
+      "void": false
+    },
+    "paged_kv": {
+      "delta_pct": -67.58696913014724,
+      "void": false
+    },
+    "prefix_cache": {
+      "delta_pct": -23.1576763440996,
+      "void": false
+    },
+    "speculative_decoding": {
+      "delta_pct": -70.76692697264791,
+      "void": false
+    },
+    "int4_awq": {
+      "delta_pct": null,
+      "void": true
+    },
+    "cuda_graphs": {
+      "delta_pct": -69.11317490625335,
+      "void": false
+    }
+  },
+  "baseline_tokens_per_sec_output": 23.870294563141105,
+  "notes": [
+    "All-off baseline: PHASE2_MAX_ACTIVE=1, KV=dynamic, prefix/spec/quant/cuda_graph off.",
+    "continuous_batching enables PHASE2_MAX_ACTIVE=8 (worker batch-decode path requires dynamic/paged).",
+    "cuda_graphs sets PHASE2_CUDA_GRAPH=1 and KV=paged (manager only attaches on paged); compare vs paged_kv cell for graph delta.",
+    "speculative_decoding uses the same Qwen checkpoint as draft for tokenizer compatibility.",
+    "Throughput with success_rate < 0.99 is void per campaign rules.",
+    "prefix_cache cell reported 0 hits under this fixed scenario (see worker_metrics_subset); do not claim a prefix win from this matrix."
+  ],
+  "cuda_graphs_delta_vs_paged_kv_pct": -4.708617908131618
+}

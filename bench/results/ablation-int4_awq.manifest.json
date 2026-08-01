@@ -1,0 +1,41 @@
+{
+  "run_id": "ablation-int4_awq",
+  "timestamp_utc": "2026-08-01T21:42:34Z",
+  "system_under_test": "phase2",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct-AWQ",
+  "gpu_type": "NVIDIA GeForce RTX 5070 Laptop GPU",
+  "gpu_count": 1,
+  "scenario_file": "bench/scenarios/ablation_matrix.yaml",
+  "scenario_id": "ablation_shared_prefix",
+  "feature_cell": "int4_awq",
+  "feature_env": {
+    "PHASE2_BACKEND": "transformers",
+    "HF_MODEL_ID": "Qwen/Qwen2-1.5B-Instruct-AWQ",
+    "HF_TORCH_DTYPE": "float16",
+    "HF_DEVICE": "cuda",
+    "PHASE2_MAX_ACTIVE": "1",
+    "PHASE2_KV_BACKEND": "dynamic",
+    "PHASE2_PREFIX_CACHE": "0",
+    "PHASE2_SPECULATIVE": "0",
+    "PHASE2_QUANT": "int4",
+    "PHASE2_CUDA_GRAPH": "0",
+    "PHASE2_CUDA_GRAPH_TRY_HF": "0",
+    "PHASE2_LORA": "0",
+    "PHASE2_BATCH_DECODE_STEPS": "1",
+    "PHASE2_DECODE_STEP_MS": "1",
+    "KV_TOTAL_BLOCKS": "4096",
+    "KV_BLOCK_SIZE_TOKENS": "16",
+    "PYTHONUNBUFFERED": "1",
+    "HF_AWQ_MODEL_ID": "Qwen/Qwen2-1.5B-Instruct-AWQ"
+  },
+  "rows": 1,
+  "inference_mode": "real_model_inference",
+  "tokens_per_sec_output": 0.0,
+  "success_rate": 0.0,
+  "throughput_void_lt_99pct_success": true,
+  "error": "model warmup failed: AWQ runtime unavailable for PHASE2_QUANT=int4: No module named 'awq'\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n",
+  "fairness_notes": {
+    "ablation": "one feature on vs all-off baseline; shared-prefix prompts",
+    "harness": "bench/harness/run.py scenario schema + manifest.schema.json"
+  }
+}

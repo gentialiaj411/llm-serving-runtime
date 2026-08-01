@@ -1,0 +1,40 @@
+{
+  "run_id": "ablation-cuda_graphs",
+  "timestamp_utc": "2026-08-01T21:42:34Z",
+  "system_under_test": "phase2",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "gpu_type": "NVIDIA GeForce RTX 5070 Laptop GPU",
+  "gpu_count": 1,
+  "scenario_file": "bench/scenarios/ablation_matrix.yaml",
+  "scenario_id": "ablation_shared_prefix",
+  "feature_cell": "cuda_graphs",
+  "feature_env": {
+    "PHASE2_BACKEND": "transformers",
+    "HF_MODEL_ID": "Qwen/Qwen2-1.5B-Instruct",
+    "HF_TORCH_DTYPE": "float16",
+    "HF_DEVICE": "cuda",
+    "PHASE2_MAX_ACTIVE": "1",
+    "PHASE2_KV_BACKEND": "paged",
+    "PHASE2_PREFIX_CACHE": "0",
+    "PHASE2_SPECULATIVE": "0",
+    "PHASE2_QUANT": "none",
+    "PHASE2_CUDA_GRAPH": "1",
+    "PHASE2_CUDA_GRAPH_TRY_HF": "0",
+    "PHASE2_LORA": "0",
+    "PHASE2_BATCH_DECODE_STEPS": "1",
+    "PHASE2_DECODE_STEP_MS": "1",
+    "KV_TOTAL_BLOCKS": "4096",
+    "KV_BLOCK_SIZE_TOKENS": "16",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "rows": 1,
+  "inference_mode": "real_model_inference",
+  "tokens_per_sec_output": 7.37277613107951,
+  "success_rate": 1.0,
+  "throughput_void_lt_99pct_success": false,
+  "error": null,
+  "fairness_notes": {
+    "ablation": "one feature on vs all-off baseline; shared-prefix prompts",
+    "harness": "bench/harness/run.py scenario schema + manifest.schema.json"
+  }
+}
