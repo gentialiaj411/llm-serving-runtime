@@ -1,6 +1,6 @@
 {
   "run_id": "ablation-int4_awq",
-  "timestamp_utc": "2026-08-01T21:42:34Z",
+  "timestamp_utc": "2026-08-01T22:27:55Z",
   "system_under_test": "phase2",
   "model_id": "Qwen/Qwen2-1.5B-Instruct-AWQ",
   "gpu_type": "NVIDIA GeForce RTX 5070 Laptop GPU",
@@ -8,6 +8,7 @@
   "scenario_file": "bench/scenarios/ablation_matrix.yaml",
   "scenario_id": "ablation_shared_prefix",
   "feature_cell": "int4_awq",
+  "ablation_table": "A",
   "feature_env": {
     "PHASE2_BACKEND": "transformers",
     "HF_MODEL_ID": "Qwen/Qwen2-1.5B-Instruct-AWQ",
@@ -25,6 +26,7 @@
     "PHASE2_DECODE_STEP_MS": "1",
     "KV_TOTAL_BLOCKS": "4096",
     "KV_BLOCK_SIZE_TOKENS": "16",
+    "PREFIX_CACHE_MAX_ENTRIES": "512",
     "PYTHONUNBUFFERED": "1",
     "HF_AWQ_MODEL_ID": "Qwen/Qwen2-1.5B-Instruct-AWQ"
   },
@@ -35,7 +37,7 @@
   "throughput_void_lt_99pct_success": true,
   "error": "model warmup failed: AWQ runtime unavailable for PHASE2_QUANT=int4: No module named 'awq'\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n",
   "fairness_notes": {
-    "ablation": "one feature on vs all-off baseline; shared-prefix prompts",
-    "harness": "bench/harness/run.py scenario schema + manifest.schema.json"
+    "ablation": "Table A: feature in meaningful config; Table B: cumulative ladder. Paged/graphs require max_active>=batch.",
+    "phase2_proxy_reference": "bench/results/paged_kv_launch_profile.meta.json B8 ~91.8 tok/s proxy"
   }
 }

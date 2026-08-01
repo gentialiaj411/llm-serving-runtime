@@ -1,7 +1,8 @@
 {
-  "artifact_type": "feature_ablation_matrix",
-  "timestamp_utc": "2026-08-01T21:42:34Z",
+  "artifact_type": "feature_ablation_matrix_corrected",
+  "timestamp_utc": "2026-08-01T22:27:55Z",
   "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "draft_model_id": "Qwen/Qwen2-0.5B-Instruct",
   "awq_model_id": "Qwen/Qwen2-1.5B-Instruct-AWQ",
   "gpu_type": "NVIDIA GeForce RTX 5070 Laptop GPU",
   "scenario_file": "bench/scenarios/ablation_matrix.yaml",
@@ -11,187 +12,454 @@
   "concurrency": 8,
   "max_output_tokens": 32,
   "measurement": "measured_on_gpu",
-  "feature_order": [
-    "baseline_all_off",
-    "continuous_batching",
-    "paged_kv",
-    "prefix_cache",
-    "speculative_decoding",
-    "int4_awq",
-    "cuda_graphs"
-  ],
-  "cells": {
-    "baseline_all_off": {
-      "request_count": 24,
-      "concurrency": 8,
-      "completed_requests": 24,
-      "success_rate": 1.0,
-      "output_tokens": 768,
-      "tokens_per_sec_output": 23.870294563141105,
-      "duration_s": 32.17388029998983,
-      "sample_errors": [],
-      "worker_metrics_subset": {
-        "prefix_cache_hit_rate": null,
-        "prefix_cache_hits": null,
-        "prefix_cache_misses": null,
-        "speculative_acceptance_rate": 0.0,
-        "continuous_batches_total": 106,
-        "kv_backend": "dynamic"
-      },
-      "feature": "baseline_all_off",
-      "status": "ok"
-    },
-    "continuous_batching": {
-      "request_count": 24,
-      "concurrency": 8,
-      "completed_requests": 24,
-      "success_rate": 1.0,
-      "output_tokens": 768,
-      "tokens_per_sec_output": 17.36751600294799,
-      "duration_s": 44.22048610000638,
-      "sample_errors": [],
-      "worker_metrics_subset": {
-        "prefix_cache_hit_rate": null,
-        "prefix_cache_hits": null,
-        "prefix_cache_misses": null,
-        "speculative_acceptance_rate": 0.0,
-        "continuous_batches_total": 107,
-        "kv_backend": "dynamic"
-      },
-      "feature": "continuous_batching",
-      "status": "ok"
-    },
-    "paged_kv": {
-      "request_count": 24,
-      "concurrency": 8,
-      "completed_requests": 24,
-      "success_rate": 1.0,
-      "output_tokens": 768,
-      "tokens_per_sec_output": 7.737085945475714,
-      "duration_s": 99.26217770000221,
-      "sample_errors": [],
-      "worker_metrics_subset": {
-        "prefix_cache_hit_rate": null,
-        "prefix_cache_hits": null,
-        "prefix_cache_misses": null,
-        "speculative_acceptance_rate": 0.0,
-        "continuous_batches_total": 105,
-        "kv_backend": "paged"
-      },
-      "feature": "paged_kv",
-      "status": "ok"
-    },
-    "prefix_cache": {
-      "request_count": 24,
-      "concurrency": 8,
-      "completed_requests": 24,
-      "success_rate": 1.0,
-      "output_tokens": 768,
-      "tokens_per_sec_output": 18.342489005825684,
-      "duration_s": 41.869999200003804,
-      "sample_errors": [],
-      "worker_metrics_subset": {
-        "prefix_cache_hit_rate": 0.0,
-        "prefix_cache_hits": 0,
-        "prefix_cache_misses": 25,
-        "speculative_acceptance_rate": 0.0,
-        "continuous_batches_total": 107,
-        "kv_backend": "dynamic"
-      },
-      "feature": "prefix_cache",
-      "status": "ok"
-    },
-    "speculative_decoding": {
-      "request_count": 24,
-      "concurrency": 8,
-      "completed_requests": 24,
-      "success_rate": 1.0,
-      "output_tokens": 768,
-      "tokens_per_sec_output": 6.9780206414870944,
-      "duration_s": 110.05986359999224,
-      "sample_errors": [],
-      "worker_metrics_subset": {
-        "prefix_cache_hit_rate": null,
-        "prefix_cache_hits": null,
-        "prefix_cache_misses": null,
-        "speculative_acceptance_rate": 0.9986996098829649,
-        "continuous_batches_total": 0,
-        "kv_backend": "dynamic"
-      },
-      "feature": "speculative_decoding",
-      "status": "ok"
-    },
-    "int4_awq": {
-      "feature": "int4_awq",
-      "status": "failed_startup",
-      "error": "model warmup failed: AWQ runtime unavailable for PHASE2_QUANT=int4: No module named 'awq'\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n",
-      "success_rate": 0.0,
-      "tokens_per_sec_output": 0.0,
-      "request_count": 24,
-      "concurrency": 8,
-      "completed_requests": 0,
-      "output_tokens": 0,
-      "duration_s": 0.0
-    },
-    "cuda_graphs": {
-      "request_count": 24,
-      "concurrency": 8,
-      "completed_requests": 24,
-      "success_rate": 1.0,
-      "output_tokens": 768,
-      "tokens_per_sec_output": 7.37277613107951,
-      "duration_s": 104.16700390000187,
-      "sample_errors": [],
-      "worker_metrics_subset": {
-        "prefix_cache_hit_rate": null,
-        "prefix_cache_hits": null,
-        "prefix_cache_misses": null,
-        "speculative_acceptance_rate": 0.0,
-        "continuous_batches_total": 105,
-        "kv_backend": "paged"
-      },
-      "feature": "cuda_graphs",
-      "status": "ok"
-    }
+  "methodology": {
+    "table_a": "Feature in meaningful config (paged/graphs at max_active=8)",
+    "table_b": "Cumulative ladder: baseline -> +CB -> +paged -> +prefix -> +graphs",
+    "prior_misconfig": "First Phase-4 run measured paged/graphs at max_active=1 and used same-model draft; those cells are superseded by this artifact."
   },
-  "delta_vs_baseline_pct": {
-    "baseline_all_off": {
-      "delta_pct": 0.0,
-      "void": false
+  "table_a": {
+    "feature_order": [
+      "baseline_all_off",
+      "continuous_batching",
+      "paged_kv",
+      "prefix_cache",
+      "speculative_decoding",
+      "int4_awq",
+      "cuda_graphs"
+    ],
+    "cells": {
+      "baseline_all_off": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 24,
+        "success_rate": 1.0,
+        "output_tokens": 768,
+        "tokens_per_sec_output": 68.6073224523179,
+        "duration_s": 11.194140400009928,
+        "sample_errors": [],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": null,
+          "prefix_cache_hits": null,
+          "prefix_cache_misses": null,
+          "prefix_cache_inserts": null,
+          "speculative_acceptance_rate": 0.0,
+          "continuous_batches_total": 108,
+          "kv_backend": "dynamic",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "baseline_all_off",
+        "env_overrides": {},
+        "status": "ok"
+      },
+      "continuous_batching": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 24,
+        "success_rate": 1.0,
+        "output_tokens": 768,
+        "tokens_per_sec_output": 79.53717483664063,
+        "duration_s": 9.655862200001138,
+        "sample_errors": [],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": null,
+          "prefix_cache_hits": null,
+          "prefix_cache_misses": null,
+          "prefix_cache_inserts": null,
+          "speculative_acceptance_rate": 0.0,
+          "continuous_batches_total": 105,
+          "kv_backend": "dynamic",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "continuous_batching",
+        "env_overrides": {
+          "PHASE2_MAX_ACTIVE": "8"
+        },
+        "status": "ok"
+      },
+      "paged_kv": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 24,
+        "success_rate": 1.0,
+        "output_tokens": 768,
+        "tokens_per_sec_output": 23.08985110397588,
+        "duration_s": 33.2613665000099,
+        "sample_errors": [],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": null,
+          "prefix_cache_hits": null,
+          "prefix_cache_misses": null,
+          "prefix_cache_inserts": null,
+          "speculative_acceptance_rate": 0.0,
+          "continuous_batches_total": 105,
+          "kv_backend": "paged",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "paged_kv",
+        "env_overrides": {
+          "PHASE2_MAX_ACTIVE": "8",
+          "PHASE2_KV_BACKEND": "paged"
+        },
+        "status": "ok"
+      },
+      "prefix_cache": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 24,
+        "success_rate": 1.0,
+        "output_tokens": 768,
+        "tokens_per_sec_output": 79.06670729403213,
+        "duration_s": 9.713317100002314,
+        "sample_errors": [],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": 0.72,
+          "prefix_cache_hits": 18,
+          "prefix_cache_misses": 7,
+          "prefix_cache_inserts": 39,
+          "speculative_acceptance_rate": 0.0,
+          "continuous_batches_total": 105,
+          "kv_backend": "dynamic",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "prefix_cache",
+        "env_overrides": {
+          "PHASE2_MAX_ACTIVE": "8",
+          "PHASE2_PREFIX_CACHE": "1"
+        },
+        "status": "ok"
+      },
+      "speculative_decoding": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 24,
+        "success_rate": 1.0,
+        "output_tokens": 768,
+        "tokens_per_sec_output": 12.700110939272696,
+        "duration_s": 60.47191269999894,
+        "sample_errors": [],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": null,
+          "prefix_cache_hits": null,
+          "prefix_cache_misses": null,
+          "prefix_cache_inserts": null,
+          "speculative_acceptance_rate": 0.5383615084525357,
+          "continuous_batches_total": 0,
+          "kv_backend": "dynamic",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "speculative_decoding",
+        "env_overrides": {
+          "PHASE2_SPECULATIVE": "1",
+          "PHASE2_SPEC_K": "4",
+          "HF_DRAFT_MODEL_ID": "Qwen/Qwen2-0.5B-Instruct"
+        },
+        "status": "ok"
+      },
+      "int4_awq": {
+        "feature": "int4_awq",
+        "status": "failed_startup",
+        "error": "model warmup failed: AWQ runtime unavailable for PHASE2_QUANT=int4: No module named 'awq'\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n",
+        "success_rate": 0.0,
+        "tokens_per_sec_output": 0.0,
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 0,
+        "output_tokens": 0,
+        "duration_s": 0.0,
+        "env_overrides": {
+          "PHASE2_QUANT": "int4",
+          "HF_AWQ_MODEL_ID": "Qwen/Qwen2-1.5B-Instruct-AWQ",
+          "HF_MODEL_ID": "Qwen/Qwen2-1.5B-Instruct-AWQ"
+        }
+      },
+      "cuda_graphs": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 24,
+        "success_rate": 1.0,
+        "output_tokens": 768,
+        "tokens_per_sec_output": 27.617189832184813,
+        "duration_s": 27.8087671000103,
+        "sample_errors": [],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": null,
+          "prefix_cache_hits": null,
+          "prefix_cache_misses": null,
+          "prefix_cache_inserts": null,
+          "speculative_acceptance_rate": 0.0,
+          "continuous_batches_total": 104,
+          "kv_backend": "paged",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "cuda_graphs",
+        "env_overrides": {
+          "PHASE2_MAX_ACTIVE": "8",
+          "PHASE2_KV_BACKEND": "paged",
+          "PHASE2_CUDA_GRAPH": "1"
+        },
+        "status": "ok"
+      }
     },
-    "continuous_batching": {
-      "delta_pct": -27.242137892316865,
-      "void": false
+    "delta_vs_baseline_pct": {
+      "baseline_all_off": {
+        "delta_pct": 0.0,
+        "void": false,
+        "tokens_per_sec_output": 68.6073224523179
+      },
+      "continuous_batching": {
+        "delta_pct": 15.931028924673418,
+        "void": false,
+        "tokens_per_sec_output": 79.53717483664063,
+        "ratio_vs_baseline": 1.1593102892467342
+      },
+      "paged_kv": {
+        "delta_pct": -66.34491730817315,
+        "void": false,
+        "tokens_per_sec_output": 23.08985110397588,
+        "ratio_vs_baseline": 0.33655082691826854
+      },
+      "prefix_cache": {
+        "delta_pct": 15.245289377068305,
+        "void": false,
+        "tokens_per_sec_output": 79.06670729403213,
+        "ratio_vs_baseline": 1.152452893770683
+      },
+      "speculative_decoding": {
+        "delta_pct": -81.4886946679791,
+        "void": false,
+        "tokens_per_sec_output": 12.700110939272696,
+        "ratio_vs_baseline": 0.185113053320209
+      },
+      "int4_awq": {
+        "delta_pct": null,
+        "void": true,
+        "tokens_per_sec_output": 0.0
+      },
+      "cuda_graphs": {
+        "delta_pct": -59.74600254749956,
+        "void": false,
+        "tokens_per_sec_output": 27.617189832184813,
+        "ratio_vs_baseline": 0.40253997452500445
+      }
     },
-    "paged_kv": {
-      "delta_pct": -67.58696913014724,
-      "void": false
-    },
-    "prefix_cache": {
-      "delta_pct": -23.1576763440996,
-      "void": false
-    },
-    "speculative_decoding": {
-      "delta_pct": -70.76692697264791,
-      "void": false
-    },
-    "int4_awq": {
-      "delta_pct": null,
-      "void": true
-    },
-    "cuda_graphs": {
-      "delta_pct": -69.11317490625335,
-      "void": false
-    }
+    "baseline_tokens_per_sec_output": 68.6073224523179,
+    "cuda_graphs_delta_vs_paged_kv_pct": 19.607483425604944
   },
-  "baseline_tokens_per_sec_output": 23.870294563141105,
+  "table_b": {
+    "feature_order": [
+      "ladder_baseline",
+      "ladder_plus_cb",
+      "ladder_plus_paged",
+      "ladder_plus_prefix",
+      "ladder_plus_graphs"
+    ],
+    "cells": {
+      "ladder_baseline": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 24,
+        "success_rate": 1.0,
+        "output_tokens": 768,
+        "tokens_per_sec_output": 87.26061986170626,
+        "duration_s": 8.801221000001533,
+        "sample_errors": [],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": null,
+          "prefix_cache_hits": null,
+          "prefix_cache_misses": null,
+          "prefix_cache_inserts": null,
+          "speculative_acceptance_rate": 0.0,
+          "continuous_batches_total": 104,
+          "kv_backend": "dynamic",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "ladder_baseline",
+        "env_overrides": {},
+        "status": "ok"
+      },
+      "ladder_plus_cb": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 24,
+        "success_rate": 1.0,
+        "output_tokens": 768,
+        "tokens_per_sec_output": 63.81230620489963,
+        "duration_s": 12.035296100002597,
+        "sample_errors": [],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": null,
+          "prefix_cache_hits": null,
+          "prefix_cache_misses": null,
+          "prefix_cache_inserts": null,
+          "speculative_acceptance_rate": 0.0,
+          "continuous_batches_total": 106,
+          "kv_backend": "dynamic",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "ladder_plus_cb",
+        "env_overrides": {
+          "PHASE2_MAX_ACTIVE": "8"
+        },
+        "status": "ok"
+      },
+      "ladder_plus_paged": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 24,
+        "success_rate": 1.0,
+        "output_tokens": 768,
+        "tokens_per_sec_output": 23.1102027410471,
+        "duration_s": 33.23207540001022,
+        "sample_errors": [],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": null,
+          "prefix_cache_hits": null,
+          "prefix_cache_misses": null,
+          "prefix_cache_inserts": null,
+          "speculative_acceptance_rate": 0.0,
+          "continuous_batches_total": 105,
+          "kv_backend": "paged",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "ladder_plus_paged",
+        "env_overrides": {
+          "PHASE2_MAX_ACTIVE": "8",
+          "PHASE2_KV_BACKEND": "paged"
+        },
+        "status": "ok"
+      },
+      "ladder_plus_prefix": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 8,
+        "success_rate": 0.3333333333333333,
+        "output_tokens": 256,
+        "tokens_per_sec_output": 43.89728009021865,
+        "duration_s": 5.831796400001622,
+        "sample_errors": [
+          "binding persistent slot requires BlockPagedCache",
+          "paged batch decode requires BlockPagedCache per request",
+          "paged batch decode requires BlockPagedCache per request"
+        ],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": 0.64,
+          "prefix_cache_hits": 16,
+          "prefix_cache_misses": 9,
+          "prefix_cache_inserts": 28,
+          "speculative_acceptance_rate": 0.0,
+          "continuous_batches_total": 40,
+          "kv_backend": "paged",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "ladder_plus_prefix",
+        "env_overrides": {
+          "PHASE2_MAX_ACTIVE": "8",
+          "PHASE2_KV_BACKEND": "paged",
+          "PHASE2_PREFIX_CACHE": "1"
+        },
+        "status": "low_success"
+      },
+      "ladder_plus_graphs": {
+        "request_count": 24,
+        "concurrency": 8,
+        "completed_requests": 0,
+        "success_rate": 0.0,
+        "output_tokens": 7,
+        "tokens_per_sec_output": 2.838487621365584,
+        "duration_s": 2.466101999991224,
+        "sample_errors": [
+          "binding persistent slot requires BlockPagedCache",
+          "binding persistent slot requires BlockPagedCache",
+          "binding persistent slot requires BlockPagedCache"
+        ],
+        "worker_metrics_subset": {
+          "prefix_cache_hit_rate": 0.68,
+          "prefix_cache_hits": 17,
+          "prefix_cache_misses": 8,
+          "prefix_cache_inserts": 28,
+          "speculative_acceptance_rate": 0.0,
+          "continuous_batches_total": 10,
+          "kv_backend": "paged",
+          "max_batch_size": 8,
+          "peak_active_requests": 8
+        },
+        "feature": "ladder_plus_graphs",
+        "env_overrides": {
+          "PHASE2_MAX_ACTIVE": "8",
+          "PHASE2_KV_BACKEND": "paged",
+          "PHASE2_PREFIX_CACHE": "1",
+          "PHASE2_CUDA_GRAPH": "1"
+        },
+        "status": "low_success"
+      }
+    },
+    "step_deltas": [
+      {
+        "cell": "ladder_baseline",
+        "tokens_per_sec_output": 87.26061986170626,
+        "success_rate": 1.0,
+        "void": false,
+        "delta_vs_previous_pct": null,
+        "previous": null
+      },
+      {
+        "cell": "ladder_plus_cb",
+        "tokens_per_sec_output": 63.81230620489963,
+        "success_rate": 1.0,
+        "void": false,
+        "delta_vs_previous_pct": -26.871587313920475,
+        "previous": "ladder_baseline"
+      },
+      {
+        "cell": "ladder_plus_paged",
+        "tokens_per_sec_output": 23.1102027410471,
+        "success_rate": 1.0,
+        "void": false,
+        "delta_vs_previous_pct": -63.7840972760946,
+        "previous": "ladder_plus_cb"
+      },
+      {
+        "cell": "ladder_plus_prefix",
+        "tokens_per_sec_output": 43.89728009021865,
+        "success_rate": 0.3333333333333333,
+        "void": true,
+        "delta_vs_previous_pct": null,
+        "previous": "ladder_plus_paged"
+      },
+      {
+        "cell": "ladder_plus_graphs",
+        "tokens_per_sec_output": 2.838487621365584,
+        "success_rate": 0.0,
+        "void": true,
+        "delta_vs_previous_pct": null,
+        "previous": "ladder_plus_prefix"
+      }
+    ],
+    "baseline_tokens_per_sec_output": 87.26061986170626
+  },
+  "phase2_cross_check": {
+    "phase2_b8_tok_per_s_proxy": 91.80450932044542,
+    "table_a_paged_kv_tok_per_s": 23.08985110397588,
+    "harness_over_proxy_ratio": 0.25151107799487615,
+    "verdict": "harness paged@ma=8 far below Phase 2 proxy \u2014 investigate before README claims"
+  },
   "notes": [
-    "All-off baseline: PHASE2_MAX_ACTIVE=1, KV=dynamic, prefix/spec/quant/cuda_graph off.",
-    "continuous_batching enables PHASE2_MAX_ACTIVE=8 (worker batch-decode path requires dynamic/paged).",
-    "cuda_graphs sets PHASE2_CUDA_GRAPH=1 and KV=paged (manager only attaches on paged); compare vs paged_kv cell for graph delta.",
-    "speculative_decoding uses the same Qwen checkpoint as draft for tokenizer compatibility.",
-    "Throughput with success_rate < 0.99 is void per campaign rules.",
-    "prefix_cache cell reported 0 hits under this fixed scenario (see worker_metrics_subset); do not claim a prefix win from this matrix."
-  ],
-  "cuda_graphs_delta_vs_paged_kv_pct": -4.708617908131618
+    "Do not cite the superseded max_active=1 paged/graph cells from the first Phase-4 commit.",
+    "Prefix cache registers intermediate trie nodes; batch prefill paths now call insert.",
+    "Table A prefix_cache (dynamic+ma=8) is the valid prefix measurement (hits>0).",
+    "Table B ladder_plus_prefix/graphs are VOID: prefix hit restores DynamicCache into paged path (BlockPagedCache required).",
+    "Phase 2 B=8 proxy (~91.8 tok/s) does NOT reproduce in this harness (~23 tok/s paged@ma=8); do not README a 3.8x claim.",
+    "INT4 remains void on .venv311 without autoawq.",
+    "cuda_graphs vs paged delta is not an HF-capture win (PHASE2_CUDA_GRAPH_TRY_HF=0); treat as noise unless capture lands."
+  ]
 }

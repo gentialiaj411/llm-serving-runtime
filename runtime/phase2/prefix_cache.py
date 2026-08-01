@@ -23,6 +23,57 @@ def iter_blocks(token_ids: list[int], block_size: int) -> list[list[int]]:
     return blocks
 
 
+def truncate_past_key_values(past_key_values: Any, n_tokens: int) -> Any:
+    """Return a KV snapshot limited to the first n_tokens (clone; never mutate input)."""
+    if past_key_values is None or n_tokens <= 0:
+        return None
+    try:
+        from transformers.cache_utils import Cache, DynamicCache
+    except Exception:
+        DynamicCache = None  # type: ignore[misc, assignment]
+        Cache = None  # type: ignore[misc, assignment]
+
+    if Cache is not None and isinstance(past_key_values, Cache):
+        assert DynamicCache is not None
+        config = getattr(past_key_values, "config", None)
+        new_cache = DynamicCache(config=config) if config is not None else DynamicCache()
+        for layer_idx, layer in enumerate(past_key_values.layers):
+            if not getattr(layer, "is_initialized", False):
+                continue
+            keys = layer.keys
+            values = layer.values
+            if keys is None or values is None or keys.numel() == 0:
+                continue
+            seq = int(keys.shape[-2])
+            end = min(n_tokens, seq)
+            new_cache.update(keys[..., :end, :].clone(), values[..., :end, :].clone(), layer_idx)
+        if hasattr(new_cache, "crop"):
+            new_cache.crop(n_tokens)
+        return new_cache
+
+    if hasattr(past_key_values, "to_legacy_cache"):
+        legacy = past_key_values.to_legacy_cache()
+    else:
+        legacy = past_key_values
+    # Opaque unit-test / non-tensor handles: keep as-is.
+    if not isinstance(legacy, (tuple, list)):
+        return past_key_values
+    truncated = []
+    for layer in legacy:
+        if not isinstance(layer, (tuple, list)):
+            return past_key_values
+        layer_out = []
+        for tensor in layer:
+            if tensor is None:
+                layer_out.append(None)
+            else:
+                seq = int(tensor.shape[-2])
+                end = min(n_tokens, seq)
+                layer_out.append(tensor[..., :end, :].clone())
+        truncated.append(tuple(layer_out))
+    return tuple(truncated)
+
+
 @dataclass
 class PrefixCacheEntry:
     entry_id: str
@@ -136,35 +187,53 @@ class PrefixBlockCache:
         past_key_values: Any,
         next_logits: Any = None,
     ) -> PrefixCacheEntry | None:
+        """Insert prompt KV into the radix tree.
+
+        Registers an entry at *every* full-block depth so a later request that
+        shares only a prefix (different suffix) can still hit. Leaf-only
+        registration made shared-prefix workloads report 0 hits.
+        """
         blocks = iter_blocks(token_ids, self.block_size_tokens)
-        if not blocks or len(block_ids) < len(blocks):
+        # Only full blocks are cacheable; drop a trailing partial block.
+        full_blocks = [b for b in blocks if len(b) == self.block_size_tokens]
+        if not full_blocks or len(block_ids) < len(full_blocks):
             return None
 
-        keys = [block_hash(chunk) for chunk in blocks]
-        entry_id = f"pfx-{keys[0]}-{len(self._entries)}-{time.time_ns()}"
-        entry = PrefixCacheEntry(
-            entry_id=entry_id,
-            block_ids=list(block_ids[: len(blocks)]),
-            block_keys=keys,
-            token_count=len(blocks) * self.block_size_tokens,
-            past_key_values=past_key_values,
-            next_logits=next_logits,
-            ref_count=0,
-        )
-
+        keys = [block_hash(chunk) for chunk in full_blocks]
         node = self._root
+        leaf: PrefixCacheEntry | None = None
         for idx, key in enumerate(keys):
             if key not in node.children:
                 node.children[key] = _TrieNode()
             node = node.children[key]
-            if idx == len(keys) - 1:
-                node.entry_id = entry_id
-
-        self._entries[entry_id] = entry
-        self._entries.move_to_end(entry_id)
-        self._inserts += 1
+            depth = idx + 1
+            n_tok = depth * self.block_size_tokens
+            is_leaf = idx == len(keys) - 1
+            if node.entry_id is not None and not is_leaf:
+                # Keep the first cached snapshot for this prefix depth.
+                continue
+            entry_id = f"pfx-{keys[0]}-{depth}-{len(self._entries)}-{time.time_ns()}"
+            entry = PrefixCacheEntry(
+                entry_id=entry_id,
+                block_ids=list(block_ids[:depth]),
+                block_keys=keys[:depth],
+                token_count=n_tok,
+                past_key_values=truncate_past_key_values(past_key_values, n_tok),
+                next_logits=next_logits if is_leaf else None,
+                ref_count=0,
+            )
+            if node.entry_id is not None and is_leaf:
+                # Replace leaf payload when re-inserting the same full key path.
+                old = self._entries.pop(node.entry_id, None)
+                if old is not None and self._on_release is not None:
+                    self._on_release(old.block_ids)
+            node.entry_id = entry_id
+            self._entries[entry_id] = entry
+            self._entries.move_to_end(entry_id)
+            self._inserts += 1
+            leaf = entry
         self._evict_if_needed()
-        return entry
+        return leaf
 
     def _evict_if_needed(self) -> None:
         while len(self._entries) > self.max_entries:

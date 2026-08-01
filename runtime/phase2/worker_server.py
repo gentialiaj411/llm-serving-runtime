@@ -75,6 +75,7 @@ class ActiveState:
     generated_token_ids: list[int] | None = None
     prefix_entry_id: str | None = None
     should_insert_prefix: bool = False
+    prefix_matched_tokens: int = 0
 
 
 _queue: asyncio.Queue[Pending] = asyncio.Queue()
@@ -430,15 +431,29 @@ class TransformersBackend:
         assert state.input_ids is not None
         if state.prompt_prefilled:
             return
+        start = max(0, int(state.prefix_matched_tokens or 0))
+        prompt_len = int(state.input_ids.shape[1])
+        if start >= prompt_len:
+            state.prompt_prefilled = True
+            return
         with self.torch.no_grad():
-            outputs = self.model(
-                input_ids=state.input_ids,
-                attention_mask=state.attention_mask,
-                past_key_values=state.past_key_values,
-                use_cache=True,
-            )
+            if start > 0 and state.past_key_values is not None:
+                outputs = self.model(
+                    input_ids=state.input_ids[:, start:],
+                    attention_mask=state.attention_mask,
+                    past_key_values=state.past_key_values,
+                    use_cache=True,
+                )
+            else:
+                outputs = self.model(
+                    input_ids=state.input_ids,
+                    attention_mask=state.attention_mask,
+                    past_key_values=state.past_key_values,
+                    use_cache=True,
+                )
         state.past_key_values = self._normalize_past_key_values(outputs.past_key_values)
         state.next_logits = outputs.logits[:, -1, :]
+        state.prefix_matched_tokens = prompt_len
         state.prompt_prefilled = True
         _try_insert_prefix_cache(state)
 
@@ -545,7 +560,10 @@ class TransformersBackend:
                 logits = outputs.logits[:, -1, :]
                 for idx, state in enumerate(group):
                     state.past_key_values = past_values[idx]
+                    state.next_logits = logits[idx : idx + 1]
+                    state.prefix_matched_tokens = int(state.input_ids.shape[1])
                     state.prompt_prefilled = True
+                    _try_insert_prefix_cache(state)
                     next_id = int(logits.argmax(dim=-1).tolist()[idx])
                     state.last_token_id = next_id
                     assert state.generated_token_ids is not None
@@ -736,21 +754,39 @@ class TransformersBackend:
 
         with self.torch.no_grad():
             for group in prefill_groups.values():
-                input_ids = self.torch.cat([state.input_ids for state in group], dim=0)
+                partial = [s for s in group if int(getattr(s, "prefix_matched_tokens", 0) or 0) > 0]
+                fresh = [s for s in group if int(getattr(s, "prefix_matched_tokens", 0) or 0) <= 0]
+                for state in partial:
+                    # Continue prefill after a shared-prefix cache hit.
+                    self._prefill_target(state)
+                    assert state.next_logits is not None
+                    next_id = int(state.next_logits.argmax(dim=-1).item())
+                    state.last_token_id = next_id
+                    assert state.generated_token_ids is not None
+                    state.generated_token_ids.append(next_id)
+                    emitted[state.req.request_id] = self.tokenizer.decode(
+                        [next_id], skip_special_tokens=True
+                    )
+                if not fresh:
+                    continue
+                input_ids = self.torch.cat([state.input_ids for state in fresh], dim=0)
                 attention_mask = None
-                if all(state.attention_mask is not None for state in group):
-                    attention_mask = self.torch.cat([state.attention_mask for state in group], dim=0)
+                if all(state.attention_mask is not None for state in fresh):
+                    attention_mask = self.torch.cat([state.attention_mask for state in fresh], dim=0)
                 outputs = self.model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     past_key_values=None,
                     use_cache=True,
                 )
-                past_values = self._split_past_key_values(outputs.past_key_values, len(group))
+                past_values = self._split_past_key_values(outputs.past_key_values, len(fresh))
                 logits = outputs.logits[:, -1, :]
-                for idx, state in enumerate(group):
+                for idx, state in enumerate(fresh):
                     state.past_key_values = past_values[idx]
+                    state.next_logits = logits[idx : idx + 1]
+                    state.prefix_matched_tokens = int(state.input_ids.shape[1])
                     state.prompt_prefilled = True
+                    _try_insert_prefix_cache(state)
                     next_id = int(logits.argmax(dim=-1).tolist()[idx])
                     state.last_token_id = next_id
                     assert state.generated_token_ids is not None
@@ -1149,22 +1185,32 @@ async def _continuous_batch_loop() -> None:
                         if lookup.hit and lookup.entry is not None:
                             borrowed_block_ids = _prefix_cache.retain_entry(lookup.entry)
                             state.prefix_entry_id = lookup.entry.entry_id
-                            state.should_insert_prefix = False
                             state.past_key_values = backend.clone_past_key_values(lookup.entry.past_key_values)
-                            state.prompt_prefilled = True
                             token_ids = backend.prompt_token_ids(state)
+                            state.prefix_matched_tokens = int(lookup.matched_tokens)
                             if lookup.matched_tokens > 0:
                                 state.last_token_id = token_ids[lookup.matched_tokens - 1]
-                            if lookup.entry.next_logits is not None:
-                                state.next_logits = lookup.entry.next_logits.clone()
+                            if lookup.matched_tokens >= len(token_ids):
+                                # Exact (or longer-cache) hit: skip prefill entirely.
+                                state.should_insert_prefix = False
+                                state.prompt_prefilled = True
+                                if lookup.entry.next_logits is not None:
+                                    state.next_logits = lookup.entry.next_logits.clone()
+                                else:
+                                    outputs = backend.model(
+                                        input_ids=state.input_ids[:, -1:],
+                                        past_key_values=state.past_key_values,
+                                        use_cache=True,
+                                    )
+                                    state.past_key_values = backend._normalize_past_key_values(
+                                        outputs.past_key_values
+                                    )
+                                    state.next_logits = outputs.logits[:, -1, :]
                             else:
-                                outputs = backend.model(
-                                    input_ids=state.input_ids[:, -1:],
-                                    past_key_values=state.past_key_values,
-                                    use_cache=True,
-                                )
-                                state.past_key_values = backend._normalize_past_key_values(outputs.past_key_values)
-                                state.next_logits = outputs.logits[:, -1, :]
+                                # Shared-prefix hit with a unique suffix still to prefill.
+                                state.should_insert_prefix = True
+                                state.prompt_prefilled = False
+                                state.next_logits = None
                 except Exception as exc:
                     _scheduler_metrics["request_errors_total"] += 1
                     _finalize_request(
