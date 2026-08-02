@@ -16,7 +16,7 @@ from runtime.phase2.kv_allocator import PagedKVAllocator
 from runtime.phase2.paged_kv_cache import BlockPagedBatchCache, BlockPagedCache
 from runtime.phase2.paged_kv_kernel import GpuKVBlockPool
 from runtime.phase2.lora_manager import LoRAManager, load_adapter_config_from_env
-from runtime.phase2.prefix_cache import PrefixBlockCache
+from runtime.phase2.prefix_cache import PrefixBlockCache, is_paged_prefix_snapshot
 
 CANCELLED_TTL_S = float(os.getenv("WORKER_CANCELLED_TTL_S", "3600"))
 CANCELLED_CACHE_MAX = int(os.getenv("WORKER_CANCELLED_CACHE_MAX", "10000"))
@@ -336,6 +336,18 @@ class TransformersBackend:
             return cache
         return None
 
+    def hydrate_paged_prefix(self, cache: BlockPagedCache, seq_len: int) -> None:
+        """Mark a freshly bound BlockPagedCache as already filled through seq_len."""
+        if seq_len < 0:
+            raise ValueError("seq_len must be >= 0")
+        dtype = self.model.dtype if hasattr(self.model, "dtype") else None
+        for layer in cache.layers:
+            layer._seq_len = int(seq_len)
+            layer.is_initialized = True
+            if dtype is not None:
+                layer.dtype = dtype
+            layer.device = self.torch.device(self.device)
+
     def sync_kv_blocks(self, state: ActiveState, block_ids: list[int]) -> None:
         cache = state.past_key_values
         if isinstance(cache, BlockPagedCache):
@@ -465,6 +477,9 @@ class TransformersBackend:
             DynamicCache = None  # type: ignore[misc, assignment]
 
         if Cache is not None and isinstance(past_key_values, Cache):
+            # BlockPagedCache cannot be safely suffix-cropped into DynamicCache.
+            if isinstance(past_key_values, BlockPagedCache):
+                return past_key_values
             assert DynamicCache is not None
             config = getattr(past_key_values, "config", None)
             new_cache = DynamicCache(config=config) if config is not None else DynamicCache()
@@ -663,7 +678,7 @@ class TransformersBackend:
                     continue
 
                 # Paged KV cannot yet crop left-pad positions out of BlockPagedCache.
-                # Only pad-batch when lengths already match; otherwise sequential.
+                # Batch only equal native lengths (no pad). Mixed lengths run sequential.
                 lengths = {int(s.input_ids.shape[1]) for s in group}
                 subgroups: list[list[ActiveState]]
                 if len(lengths) == 1:
@@ -672,21 +687,16 @@ class TransformersBackend:
                     subgroups = [[s] for s in group]
 
                 for sub in subgroups:
-                    target = bucket if len(sub) > 1 or int(sub[0].input_ids.shape[1]) == bucket else int(
-                        sub[0].input_ids.shape[1]
-                    )
-                    # Exact-length batch: cat; single unequal: no pad needed at native length.
-                    if len(sub) == 1 and int(sub[0].input_ids.shape[1]) != bucket:
+                    if len(sub) == 1:
                         input_ids = sub[0].input_ids
                         attention_mask = sub[0].attention_mask
                         past = sub[0].past_key_values
                     else:
-                        input_ids, attention_mask = self._left_pad_prefill_batch(sub, target)
-                        past = None
-                        if len(sub) == 1:
-                            past = sub[0].past_key_values
-                        elif any(s.past_key_values is not None for s in sub):
-                            past = self._concat_paged_caches(sub)
+                        # Equal native lengths: concatenate without left-pad (pad would
+                        # require more KV blocks than token_capacity allocated).
+                        input_ids = self.torch.cat([s.input_ids for s in sub], dim=0)
+                        attention_mask = self.torch.cat([s.attention_mask for s in sub], dim=0)
+                        past = self._concat_paged_caches(sub)
                     outputs = self.model(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
@@ -1245,11 +1255,28 @@ def _try_insert_prefix_cache(state: ActiveState) -> None:
     if n_blocks <= 0:
         return
     prefix_len = n_blocks * block_size
+    snapshot_fn = None
+    past = state.past_key_values
+    if isinstance(past, BlockPagedCache):
+        backend = _backend
+        pool = getattr(backend, "kv_pool", None) if backend is not None else None
+        if pool is None:
+            return
+
+        def snapshot_fn(src_ids: list[int]) -> list[int] | None:
+            assert _allocator is not None
+            dst = _allocator.allocate_detached_blocks(len(src_ids))
+            if dst is None:
+                return None
+            pool.copy_blocks(src_ids, dst)
+            return dst
+
     _prefix_cache.insert(
         token_ids[:prefix_len],
         alloc.block_ids[:n_blocks],
-        state.past_key_values,
+        past,
         state.next_logits,
+        snapshot_blocks=snapshot_fn,
     )
     state.should_insert_prefix = False
 
@@ -1323,40 +1350,64 @@ async def _continuous_batch_loop() -> None:
                 should_insert_prefix=_prefix_cache is not None,
             )
             borrowed_block_ids: list[int] = []
+            paged_prefix_src_blocks: list[int] | None = None
+            need_exact_logits = False
             if backend is not None:
                 try:
                     backend.init_state(state)
                     if _prefix_cache is not None:
                         lookup = _prefix_cache.lookup(backend.prompt_token_ids(state))
                         if lookup.hit and lookup.entry is not None:
-                            borrowed_block_ids = _prefix_cache.retain_entry(lookup.entry)
+                            _prefix_cache.retain_entry(lookup.entry)
                             state.prefix_entry_id = lookup.entry.entry_id
-                            state.past_key_values = backend.clone_past_key_values(lookup.entry.past_key_values)
                             token_ids = backend.prompt_token_ids(state)
                             state.prefix_matched_tokens = int(lookup.matched_tokens)
                             if lookup.matched_tokens > 0:
                                 state.last_token_id = token_ids[lookup.matched_tokens - 1]
-                            if lookup.matched_tokens >= len(token_ids):
-                                # Exact (or longer-cache) hit: skip prefill entirely.
-                                state.should_insert_prefix = False
-                                state.prompt_prefilled = True
-                                if lookup.entry.next_logits is not None:
-                                    state.next_logits = lookup.entry.next_logits.clone()
+                            entry_past = lookup.entry.past_key_values
+                            paged_hit = backend.kv_backend == "paged" or is_paged_prefix_snapshot(
+                                entry_past
+                            )
+                            if paged_hit:
+                                # Approach A: copy prefix blocks into a fresh request
+                                # BlockPagedCache after allocate — never DynamicCache clone.
+                                paged_prefix_src_blocks = list(lookup.entry.block_ids)
+                                state.past_key_values = None
+                                if lookup.matched_tokens >= len(token_ids):
+                                    state.should_insert_prefix = False
+                                    state.prompt_prefilled = True
+                                    if lookup.entry.next_logits is not None:
+                                        state.next_logits = lookup.entry.next_logits.clone()
+                                    else:
+                                        need_exact_logits = True
                                 else:
-                                    outputs = backend.model(
-                                        input_ids=state.input_ids[:, -1:],
-                                        past_key_values=state.past_key_values,
-                                        use_cache=True,
-                                    )
-                                    state.past_key_values = backend._normalize_past_key_values(
-                                        outputs.past_key_values
-                                    )
-                                    state.next_logits = outputs.logits[:, -1, :]
+                                    state.should_insert_prefix = True
+                                    state.prompt_prefilled = False
+                                    state.next_logits = None
                             else:
-                                # Shared-prefix hit with a unique suffix still to prefill.
-                                state.should_insert_prefix = True
-                                state.prompt_prefilled = False
-                                state.next_logits = None
+                                borrowed_block_ids = list(lookup.entry.block_ids)
+                                state.past_key_values = backend.clone_past_key_values(entry_past)
+                                if lookup.matched_tokens >= len(token_ids):
+                                    # Exact (or longer-cache) hit: skip prefill entirely.
+                                    state.should_insert_prefix = False
+                                    state.prompt_prefilled = True
+                                    if lookup.entry.next_logits is not None:
+                                        state.next_logits = lookup.entry.next_logits.clone()
+                                    else:
+                                        outputs = backend.model(
+                                            input_ids=state.input_ids[:, -1:],
+                                            past_key_values=state.past_key_values,
+                                            use_cache=True,
+                                        )
+                                        state.past_key_values = backend._normalize_past_key_values(
+                                            outputs.past_key_values
+                                        )
+                                        state.next_logits = outputs.logits[:, -1, :]
+                                else:
+                                    # Shared-prefix hit with a unique suffix still to prefill.
+                                    state.should_insert_prefix = True
+                                    state.prompt_prefilled = False
+                                    state.next_logits = None
                 except Exception as exc:
                     _scheduler_metrics["request_errors_total"] += 1
                     _finalize_request(
@@ -1383,6 +1434,30 @@ async def _continuous_batch_loop() -> None:
                 try:
                     if state.past_key_values is None and alloc is not None:
                         state.past_key_values = backend._create_kv_cache(token_capacity, alloc.block_ids)
+                        if (
+                            paged_prefix_src_blocks is not None
+                            and isinstance(state.past_key_values, BlockPagedCache)
+                            and state.prefix_matched_tokens > 0
+                        ):
+                            pool = backend.kv_pool
+                            if pool is None:
+                                raise RuntimeError("paged prefix hit requires GpuKVBlockPool")
+                            n_copy = min(len(paged_prefix_src_blocks), len(alloc.block_ids))
+                            pool.copy_blocks(paged_prefix_src_blocks[:n_copy], alloc.block_ids[:n_copy])
+                            backend.hydrate_paged_prefix(
+                                state.past_key_values, state.prefix_matched_tokens
+                            )
+                            if need_exact_logits and state.next_logits is None:
+                                with backend.torch.no_grad():
+                                    outputs = backend.model(
+                                        input_ids=state.input_ids[:, -1:],
+                                        past_key_values=state.past_key_values,
+                                        use_cache=True,
+                                    )
+                                state.past_key_values = backend._normalize_past_key_values(
+                                    outputs.past_key_values
+                                )
+                                state.next_logits = outputs.logits[:, -1, :]
                         if backend.kv_backend == "reserved":
                             state.contiguous_kv_hold = backend._allocate_contiguous_hold(token_capacity)
                 except Exception as exc:

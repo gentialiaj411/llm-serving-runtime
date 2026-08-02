@@ -49,6 +49,19 @@ class PagedKVAllocator:
             if block_id in self._free:
                 self._free.remove(block_id)
 
+    def allocate_detached_blocks(self, n_blocks: int) -> list[int] | None:
+        """Allocate blocks held only by refcount (prefix snapshots), not a request."""
+        if n_blocks <= 0:
+            return []
+        if n_blocks > len(self._free):
+            self._allocation_failures_total += 1
+            return None
+        ids = [self._free.pop() for _ in range(n_blocks)]
+        self.retain_blocks(ids)
+        self._allocations_total += 1
+        self._update_peaks()
+        return ids
+
     def release_blocks(self, block_ids: list[int]) -> None:
         for block_id in block_ids:
             refs = self._block_refs.get(block_id, 0)

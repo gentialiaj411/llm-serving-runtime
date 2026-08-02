@@ -23,10 +23,17 @@ def iter_blocks(token_ids: list[int], block_size: int) -> list[list[int]]:
     return blocks
 
 
+def is_paged_prefix_snapshot(past_key_values: Any) -> bool:
+    return isinstance(past_key_values, dict) and past_key_values.get("backend") == "paged"
+
+
 def truncate_past_key_values(past_key_values: Any, n_tokens: int) -> Any:
     """Return a KV snapshot limited to the first n_tokens (clone; never mutate input)."""
     if past_key_values is None or n_tokens <= 0:
         return None
+    # BlockPagedCache must not be gathered into DynamicCache — store a marker instead.
+    if type(past_key_values).__name__ == "BlockPagedCache" or is_paged_prefix_snapshot(past_key_values):
+        return {"backend": "paged", "seq_len": int(n_tokens)}
     try:
         from transformers.cache_utils import Cache, DynamicCache
     except Exception:
@@ -167,11 +174,15 @@ class PrefixBlockCache:
         return PrefixLookupResult(matched_tokens, matched_blocks, last_entry, True)
 
     def retain_entry(self, entry: PrefixCacheEntry) -> list[int]:
+        """Pin entry against LRU eviction while a request is using it.
+
+        Does not touch allocator refs: paged snapshots are held by
+        ``allocate_detached_blocks`` until eviction ``on_release``; dynamic hits
+        clone tensors and do not need live block pins.
+        """
         entry.ref_count += 1
         entry.last_used = time.time()
         self._entries.move_to_end(entry.entry_id)
-        if self._on_retain is not None:
-            self._on_retain(entry.block_ids)
         return list(entry.block_ids)
 
     def release_entry(self, entry_id: str) -> None:
@@ -186,12 +197,18 @@ class PrefixBlockCache:
         block_ids: list[int],
         past_key_values: Any,
         next_logits: Any = None,
+        *,
+        snapshot_blocks: Callable[[list[int]], list[int] | None] | None = None,
     ) -> PrefixCacheEntry | None:
         """Insert prompt KV into the radix tree.
 
         Registers an entry at *every* full-block depth so a later request that
         shares only a prefix (different suffix) can still hit. Leaf-only
         registration made shared-prefix workloads report 0 hits.
+
+        When ``snapshot_blocks`` is provided (paged Approach A), each depth gets
+        an independent physical copy of the leading blocks so prefix data survives
+        after the inserting request frees its allocation.
         """
         blocks = iter_blocks(token_ids, self.block_size_tokens)
         # Only full blocks are cacheable; drop a trailing partial block.
@@ -212,13 +229,22 @@ class PrefixBlockCache:
             if node.entry_id is not None and not is_leaf:
                 # Keep the first cached snapshot for this prefix depth.
                 continue
+            src_ids = list(block_ids[:depth])
+            if snapshot_blocks is not None:
+                stored_ids = snapshot_blocks(src_ids)
+                if stored_ids is None:
+                    return leaf
+                stored_past: Any = {"backend": "paged", "seq_len": n_tok}
+            else:
+                stored_ids = src_ids
+                stored_past = truncate_past_key_values(past_key_values, n_tok)
             entry_id = f"pfx-{keys[0]}-{depth}-{len(self._entries)}-{time.time_ns()}"
             entry = PrefixCacheEntry(
                 entry_id=entry_id,
-                block_ids=list(block_ids[:depth]),
+                block_ids=stored_ids,
                 block_keys=keys[:depth],
                 token_count=n_tok,
-                past_key_values=truncate_past_key_values(past_key_values, n_tok),
+                past_key_values=stored_past,
                 next_logits=next_logits if is_leaf else None,
                 ref_count=0,
             )

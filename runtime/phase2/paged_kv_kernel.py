@@ -230,6 +230,25 @@ class GpuKVBlockPool:
         for physical in physical_ids.unique().tolist():
             self._touch_block(int(physical))
 
+    def copy_blocks(self, src_block_ids: list[int], dst_block_ids: list[int]) -> None:
+        """Copy full physical blocks (all layers) from src ids to dst ids."""
+        if len(src_block_ids) != len(dst_block_ids):
+            raise ValueError(
+                f"copy_blocks length mismatch: src={len(src_block_ids)} dst={len(dst_block_ids)}"
+            )
+        if not src_block_ids:
+            return
+        self._ensure_pools()
+        assert self._k_pool is not None
+        assert self._v_pool is not None
+        for src, dst in zip(src_block_ids, dst_block_ids):
+            if src == dst:
+                continue
+            self._touch_block(int(src))
+            self._touch_block(int(dst))
+            self._k_pool[int(dst)].copy_(self._k_pool[int(src)])
+            self._v_pool[int(dst)].copy_(self._v_pool[int(src)])
+
     def gather_layer(
         self,
         layer_idx: int,

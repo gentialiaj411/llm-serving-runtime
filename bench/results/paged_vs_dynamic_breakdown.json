@@ -1,0 +1,71 @@
+{
+  "timestamp_utc": "2026-08-02T00:50:01.343125+00:00",
+  "artifact_type": "paged_vs_dynamic_breakdown",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "scenario": {
+    "prompt_tokens": 128,
+    "decode_tokens": 512,
+    "batch_size": 8,
+    "note": "decode-heavy; wall times include CUDA synchronize"
+  },
+  "measurement": "measured_on_gpu",
+  "backends": [
+    {
+      "kv_backend": "dynamic",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "decode_tokens": 512,
+      "warmup": 1,
+      "repeats": 3,
+      "prefill_wall_s_samples": [
+        0.10550809999995181,
+        0.11822070000016538,
+        0.11663429999998698
+      ],
+      "decode_wall_s_samples": [
+        21.027529199999663,
+        17.95785339999975,
+        19.15984810000009
+      ],
+      "prefill_wall_s_median": 0.11663429999998698,
+      "decode_wall_s_median": 19.15984810000009,
+      "total_wall_s_median": 19.276482400000077,
+      "prefill_fraction": 0.006050600808785866,
+      "decode_fraction": 0.9939493991912142,
+      "decode_tok_per_s_median": 213.78040048240157,
+      "end_to_end_tok_per_s_median": 212.48690061834017
+    },
+    {
+      "kv_backend": "paged",
+      "batch_size": 8,
+      "prompt_tokens": 128,
+      "decode_tokens": 512,
+      "warmup": 1,
+      "repeats": 3,
+      "prefill_wall_s_samples": [
+        1.2442622999997184,
+        0.8292392999996991,
+        1.3951311000000715
+      ],
+      "decode_wall_s_samples": [
+        62.87349710000035,
+        63.89752999999973,
+        56.46549920000007
+      ],
+      "prefill_wall_s_median": 1.2442622999997184,
+      "decode_wall_s_median": 62.87349710000035,
+      "total_wall_s_median": 64.11775940000007,
+      "prefill_fraction": 0.019405891778553275,
+      "decode_fraction": 0.9805941082214468,
+      "decode_tok_per_s_median": 65.14668642473168,
+      "end_to_end_tok_per_s_median": 63.882456878242
+    }
+  ],
+  "comparison": {
+    "paged_decode_slowdown_vs_dynamic": 3.28152377679863,
+    "paged_prefill_slowdown_vs_dynamic": 10.668065054618214,
+    "paged_e2e_slowdown_vs_dynamic": 3.326216789428335,
+    "dynamic_prefill_fraction": 0.006050600808785866,
+    "paged_prefill_fraction": 0.019405891778553275
+  }
+}
