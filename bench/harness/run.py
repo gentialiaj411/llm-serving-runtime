@@ -6,6 +6,7 @@ import csv
 import datetime as dt
 import hashlib
 import json
+import os
 import shutil
 import statistics
 import subprocess
@@ -229,7 +230,8 @@ async def one_request_streaming(
 
 
 async def run_scenario(base_url: str, model: str, scenario: dict, c: int, warmup_requests: int = 1) -> dict:
-    req_count = max(20, c * 6)
+    req_count = int(scenario.get("request_count", max(20, c * 6)))
+    req_count = max(1, req_count)
     latencies: list[float] = []
     ttfts: list[float] = []
     itoks: list[float] = []
@@ -239,9 +241,10 @@ async def run_scenario(base_url: str, model: str, scenario: dict, c: int, warmup
     http_failures = 0
     other_failures = 0
     turns = int(scenario.get("turns", 1))
+    http_timeout_s = float(os.getenv("HARNESS_HTTP_TIMEOUT_S", "600"))
 
     sem = asyncio.Semaphore(c)
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=http_timeout_s) as client:
         for _ in range(max(0, warmup_requests)):
             try:
                 await one_request_streaming(

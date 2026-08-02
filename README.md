@@ -1,34 +1,63 @@
-# LLM Serving Runtime
+# Orcaforge (LLM Serving Runtime)
 
-Distributed transformer inference runtime with OpenAI-compatible API and reproducible benchmarking against vLLM.
+Python/PyTorch LLM serving prototype: OpenAI-compatible API → coordinator → continuous-batching worker, with paged KV, prefix cache, optional LoRA/spec/INT4. Built to measure systems choices honestly against vLLM — **not** to claim throughput wins.
+
+**Evidence ledger:** local [`CLAIMS_MATRIX.md`](CLAIMS_MATRIX.md) (gitignored). Numbers below are tied to artifacts under `bench/results/`.
+
+## What this project is good for
+
+- **Systems engineering under measurement discipline:** continuous batching, paged KV reliability, prefix-cache composition, ablation protocol with noise floors.
+- **Honest negatives:** paged decode still loses vs dynamic KV; vLLM wins matched TinyLlama H2H; speculative decode is **1.18×** not 1.5×.
+
+## Headline evidence (do not round favorably)
+
+| Claim | Result | Caveat | Artifact |
+|---|---|---|---|
+| **Paged CB reliability (Phase 1)** | ma=8 continuous-batch split ownership fixed; live 32/32 success on repro | Throughput still loses vs contiguous | `ca17077`, `tests/test_paged_batch_membership.py` |
+| **Prefix KV (dynamic)** | **+46.97%** (10.76 → 15.81 tok/s), hit rate **0.95** | Not a vLLM cross-system win | [`prefix_cache.json`](bench/results/prefix_cache.json) |
+| **Paged + prefix composition** | Approach A: detached block snapshots + `BlockPagedCache` hydrate; live success **1.0**, hits **9** | Correctness gate, not a speedup | [`paged_prefix_verify.json`](bench/results/paged_prefix_verify.json) |
+| **Paged vs dynamic cost** | Decode-heavy B=8 128/512: paged decode ~**3.28×** slower wall; loss is decode-dominated | Prefer `PHASE2_KV_BACKEND=dynamic` as default | [`paged_vs_dynamic_breakdown.json`](bench/results/paged_vs_dynamic_breakdown.json) |
+| **Stable feature ablation** | CB within noise; paged/prefix **above_noise_loss** on decode-heavy protocol | Do not cite superseded single-shot tables | [`ablation_matrix.json`](bench/results/ablation_matrix.json) |
+| **Multi-LoRA** | ≥3 adapters, no base reload; **−25%** vs base-only | Synthetic PEFT unless paths set | [`multi_lora.json`](bench/results/multi_lora.json) |
+| **Speculative decode** | Wired + parity tests; **1.18×**, 62.5% accept | Below 1.5× target | [`spec-decode-comparison.json`](bench/results/spec-decode-comparison.json) |
+| **INT4 AWQ** | Runs E2E; lower VRAM | Token agreement vs FP16 **0.17** | [`quantization_comparison.json`](bench/results/quantization_comparison.json) |
+| **vs vLLM (TinyLlama)** | vLLM **wins every** matched throughput row (e.g. `short_short @ c16` **735** vs **41** tok/s) | TinyLlama `long_*` / `chat_multiturn` failed at 2048 ctx | `*-head-to-head-tonight.*` |
+| **Qwen2 long/mixed/chat repair** | All measured rows **success_rate=1.0** on Orcaforge (`long_short`/`long_long` c1; `mixed` c1/c8; `chat_multiturn` c1/c4). Concurrent empty-stream bug fixed (UUID request ids). | Matched vLLM H2H blocked when WSL unavailable; chat c8 not claimed on 8GB laptop | [`orcaforge-qwen2-repair.csv`](bench/results/orcaforge-qwen2-repair.csv) |
+
+### Synthetic MoE (not real MoE serving)
+
+Toy routing only (`runtime/phase2/moe_primitive.py`). Artifact: [`moe-synthetic.json`](bench/results/moe-synthetic.json). ADR: [`0008`](docs/adr/0008-synthetic-moe-routing.md).
 
 ## Design
-- [Design notes](docs/design.md) summarize the systems choices behind Orca-style iteration-level scheduling, paged KV allocation, streaming retry boundaries, and coordinator routing.
-- Real-inference smoke artifacts live in `bench/results/` for Phase 1 Transformers and vLLM on TinyLlama-1.1B.
-- Generate the comparison chart with `python bench/scripts/plot_comparison.py`; output is written to `bench/results/comparison.png`.
+- [Design notes](docs/design.md) — iteration scheduling, paged KV, streaming retry, coordinator routing.
+- ADRs under [`docs/adr/`](docs/adr/).
+- Phase2 smoke: `python bench/scripts/continuous_batching_kv_live.py`
+- Comparison chart: `python bench/scripts/plot_comparison.py` → `bench/results/comparison.png`
 
 ![Real-inference smoke comparison](bench/results/comparison.png)
 
-## Phase 0 status
-- Repo scaffolded
-- Benchmark harness skeleton + CSV/manifest schema
-- Baseline scenarios including `mixed_concurrency` and `chat_multiturn`
-- Determinism check (`temperature=0`) implemented in harness logic
-- ADR pack drafted
-
 ## Quickstart
 ```bash
-# Python harness env
-python -m venv .venv
-. .venv/Scripts/activate
-pip install -r bench/harness/requirements.txt
-
-# Validate scenario + schema
+python -m venv .venv311
+.venv311\Scripts\activate
+pip install -r requirements.txt   # plus torch CUDA build for GPU
 python bench/harness/run.py --dry-run --scenarios bench/scenarios/baseline.yaml
 ```
 
-## Final benchmark handoff
-- For pinned vLLM baseline generation on a supported Linux GPU host, run:
-`bash scripts/gpu_host_handoff.sh`
-- See full instructions:
-`docs/reports/gpu-baseline-handoff.md`
+Worker (GPU):
+```bash
+set PHASE2_BACKEND=transformers
+set HF_MODEL_ID=Qwen/Qwen2-1.5B-Instruct
+set HF_DEVICE=cuda
+uvicorn runtime.phase2.worker_server:app --port 8102
+```
+
+## Benchmarks
+- Harness: `bench/harness/run.py`
+- Qwen2 repair (Orcaforge): `python scripts/run_orcaforge_qwen2_repair.py`
+- Paged+prefix gate: `python bench/scripts/paged_prefix_verify.py`
+- Prefill/decode breakdown: `python bench/scripts/paged_vs_dynamic_breakdown.py`
+- vLLM (Linux/WSL): `bash scripts/run_vllm_baseline_ubuntu.sh`
+
+## Status
+Phases 1–6 complete on this host: paged reliability, dispatch amortize, CUDA-graph plumbing, stable ablations, paged↔prefix, Qwen2 long/mixed/chat repair (Orcaforge), README cleanup. Matched vLLM repair rows still need WSL. **Do not claim Orcaforge beats vLLM.**

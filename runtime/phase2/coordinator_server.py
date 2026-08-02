@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import time
+import uuid
 from typing import Any, AsyncIterator
 
 import httpx
@@ -471,7 +472,7 @@ async def _worker_stream(
     stream_start = time.perf_counter()
     prompt_tokens = max(1, len(prompt.split()))
     try:
-        timeout_s = 30.0
+        timeout_s = float(os.getenv("COORDINATOR_WORKER_STREAM_TIMEOUT_S", "900"))
         if deadline_ms is not None:
             timeout_s = max(0.050, (deadline_ms - int(time.time() * 1000)) / 1000.0)
 
@@ -612,7 +613,7 @@ async def chat_completions(req: ChatRequest) -> dict[str, Any] | StreamingRespon
         raise HTTPException(status_code=408, detail="Deadline already expired")
 
     prompt = "\n".join(m.content for m in req.messages)
-    request_id = req.request_id or f"req-{int(time.time()*1e6)}"
+    request_id = req.request_id or f"req-{uuid.uuid4().hex}"
     _metrics["requests_total"] += 1
     tenant_key = req.tenant_id or "default"
     await _admit_or_wait(tenant_key)

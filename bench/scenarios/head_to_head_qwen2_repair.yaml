@@ -1,0 +1,26 @@
+version: "1"
+# Phase 5 repair: previously failed TinyLlama/vLLM rows, re-targeted to Qwen2-1.5B.
+# Qwen2 context is large enough that chat-template expansion is not the TinyLlama-2048 failure mode.
+# request_count is reduced vs full H2H so a single-GPU laptop can finish overnight-friendly.
+scenarios:
+  - id: long_short
+    concurrency: [1]
+    prompt_tokens: 1500
+    max_output_tokens: 64
+    request_count: 8
+  - id: long_long
+    concurrency: [1]
+    prompt_tokens: 1400
+    max_output_tokens: 512
+    request_count: 4
+  - id: mixed_concurrency
+    concurrency: [1, 8]
+    prompt_tokens: 500
+    max_output_tokens: 128
+    request_count: 12
+  - id: chat_multiturn
+    concurrency: [1, 4]
+    prompt_tokens: 1000
+    max_output_tokens: 128
+    turns: 4
+    request_count: 12

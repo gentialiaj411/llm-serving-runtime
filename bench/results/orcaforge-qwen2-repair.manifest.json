@@ -1,0 +1,33 @@
+{
+  "run_id": "orcaforge-qwen2-repair",
+  "timestamp_utc": "2026-08-02T03:13:46Z",
+  "system_under_test": "phase2",
+  "model_id": "Qwen/Qwen2-1.5B-Instruct",
+  "headline_vllm_version": "0.21.0",
+  "gpu_type": "rtx5070-laptop",
+  "gpu_count": 1,
+  "gpu_hour_usd": 2.5,
+  "base_url": "http://127.0.0.1:63862/v1/chat/completions",
+  "inference_mode": "real_model_inference",
+  "gpu_metrics_valid": true,
+  "determinism": {
+    "passed": true,
+    "hash_a": "f6f663a1a36b94e9ba75ed0a5a1a21b12b6c4b9f37d78e5b956c2aee418e51e0",
+    "hash_b": "f6f663a1a36b94e9ba75ed0a5a1a21b12b6c4b9f37d78e5b956c2aee418e51e0",
+    "mode": "strict"
+  },
+  "aggregate_est_dollars_per_million_output_tokens": 23.817160429112963,
+  "rows": 6,
+  "launch_vllm": false,
+  "warmup_requests_per_scenario": 1,
+  "gpu_sampler": {
+    "enabled": true,
+    "interval_s": 0.5,
+    "samples_collected": 635
+  },
+  "metric_notes": {
+    "ttft": "Measured from request send to first streamed assistant token chunk.",
+    "inter_token_latency": "Measured as gaps between streamed assistant token chunk arrivals.",
+    "gpu": "Valid only when gpu_metrics_valid is true; otherwise CSV GPU columns are zeros from missing samples."
+  }
+}
