@@ -2,7 +2,7 @@
 
 Python/PyTorch LLM serving prototype: OpenAI-compatible API → coordinator → continuous-batching worker, with paged KV, prefix cache, optional LoRA/spec/INT4. Built to measure systems choices honestly against vLLM — **not** to claim throughput wins.
 
-**Evidence ledger:** local [`CLAIMS_MATRIX.md`](CLAIMS_MATRIX.md) (gitignored). Numbers below are tied to artifacts under `bench/results/`.
+Every number below is tied to a committed artifact under `bench/results/`. Where a result is negative or within measurement noise, it is reported as such.
 
 ## What this project is good for
 
@@ -22,11 +22,11 @@ Python/PyTorch LLM serving prototype: OpenAI-compatible API → coordinator → 
 | **Speculative decode** | Wired + parity tests; **1.18×**, 62.5% accept | Below 1.5× target | [`spec-decode-comparison.json`](bench/results/spec-decode-comparison.json) |
 | **INT4 AWQ** | Runs E2E; lower VRAM | Token agreement vs FP16 **0.17** | [`quantization_comparison.json`](bench/results/quantization_comparison.json) |
 | **vs vLLM (TinyLlama)** | vLLM **wins every** matched throughput row (e.g. `short_short @ c16` **735** vs **41** tok/s) | TinyLlama `long_*` / `chat_multiturn` failed at 2048 ctx | `*-head-to-head-tonight.*` |
-| **Qwen2 long/mixed/chat repair** | All measured rows **success_rate=1.0** on Orcaforge (`long_short`/`long_long` c1; `mixed` c1/c8; `chat_multiturn` c1/c4). Concurrent empty-stream bug fixed (UUID request ids). | Matched vLLM H2H blocked when WSL unavailable; chat c8 not claimed on 8GB laptop | [`orcaforge-qwen2-repair.csv`](bench/results/orcaforge-qwen2-repair.csv) |
+| **Qwen2 long/mixed/chat repair** | All measured rows **success_rate=1.0** on Orcaforge (`long_short`/`long_long` c1; `mixed` c1/c8; `chat_multiturn` c1/c4). Concurrent empty-stream bug fixed (UUID request ids). | WSL/vLLM out of scope on this host; chat c8 not claimed on 8GB laptop | [`orcaforge-qwen2-repair.csv`](bench/results/orcaforge-qwen2-repair.csv) |
 
 ### Synthetic MoE (not real MoE serving)
 
-Toy routing only (`runtime/phase2/moe_primitive.py`). Artifact: [`moe-synthetic.json`](bench/results/moe-synthetic.json). ADR: [`0008`](docs/adr/0008-synthetic-moe-routing.md).
+Toy routing only (`runtime/phase2/moe_primitive.py`). Artifact: [`moe-synthetic.json`](bench/results/moe-synthetic.json).
 
 ## Design
 - [Design notes](docs/design.md) — iteration scheduling, paged KV, streaming retry, coordinator routing.
@@ -57,7 +57,6 @@ uvicorn runtime.phase2.worker_server:app --port 8102
 - Qwen2 repair (Orcaforge): `python scripts/run_orcaforge_qwen2_repair.py`
 - Paged+prefix gate: `python bench/scripts/paged_prefix_verify.py`
 - Prefill/decode breakdown: `python bench/scripts/paged_vs_dynamic_breakdown.py`
-- vLLM (Linux/WSL): `bash scripts/run_vllm_baseline_ubuntu.sh`
 
 ## Status
-Phases 1–6 complete on this host: paged reliability, dispatch amortize, CUDA-graph plumbing, stable ablations, paged↔prefix, Qwen2 long/mixed/chat repair (Orcaforge), README cleanup. Matched vLLM repair rows still need WSL. **Do not claim Orcaforge beats vLLM.**
+Phases 1–6 complete and pushed to `origin/main`. Story is Orcaforge systems work + honest measurement on Windows/RTX 5070. **WSL/vLLM is out of scope on this host.** Historical TinyLlama H2H artifacts remain for context; do not claim Orcaforge beats vLLM.
